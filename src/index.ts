@@ -9,7 +9,7 @@ import { info } from "./output.js";
 const HELP = `dockhold — put your app online from your computer
 
 Usage:
-  dockhold login [--token <token>]
+  dockhold login [--token [<token>]]   (a bare --token prompts for a paste)
   dockhold deploy [--name <name>] [--env KEY=VALUE ...] [--db]
   dockhold logs [--app <id>] [--tail <n>] [--type app|build|db]
   dockhold list

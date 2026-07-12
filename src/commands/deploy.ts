@@ -1,9 +1,8 @@
 // `dockhold deploy` — the whole push flow (local-deploy-spec §4, PR 4):
 //   resolve/create app -> pack -> presign -> upload -> complete -> poll to done.
 
-import { basename } from "node:path";
-import { readFile, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { readFile, rm } from "node:fs/promises";
 import { loadToken } from "../config.js";
 import { readState, writeState, ensureGitignoreEntry } from "../state.js";
 import { packDirectory, type PackResult } from "../pack.js";
@@ -101,7 +100,8 @@ export async function deploy(args: string[]): Promise<number> {
       return 1;
     }
   } finally {
-    await unlink(pack.archivePath).catch(() => {});
+    // The archive lives in its own mkdtemp directory — remove the whole thing.
+    await rm(dirname(pack.archivePath), { recursive: true, force: true }).catch(() => {});
   }
 
   // 5. Wait for the build to finish.
@@ -167,8 +167,11 @@ async function uploadAndConfirm(
   if (res.ok) return { ok: true };
 
   if (res.kind === "incomplete") {
-    // The object did not land; the PUT URL is still valid, so re-push once.
-    await uploadWithRetry(uploadUrl, pack.archivePath, pack.sizeBytes);
+    // The object did not land. Ask for a fresh upload link before the one
+    // re-push (the original could be close to, or past, its expiry after a
+    // slow first upload), then confirm again.
+    const fresh = await presign(token, namespace, pack.sha256);
+    await uploadWithRetry(fresh.uploadUrl, pack.archivePath, pack.sizeBytes);
     res = await complete(token, namespace, pack.sha256, pack.sizeBytes);
     if (res.ok) return { ok: true };
   }

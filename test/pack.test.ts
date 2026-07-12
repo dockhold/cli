@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, stat, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { list } from "tar";
 import { packDirectory } from "../src/pack.js";
 
@@ -51,7 +51,31 @@ test("packDirectory excludes secrets, deps, git, and gitignored paths", async ()
     assert.ok(!names.some((n) => n.startsWith(".git/") || n === ".git"));
     assert.ok(!names.some((n) => n.startsWith("dist")), ".gitignore should exclude dist/");
 
-    await rm(result.archivePath, { force: true });
+    await rm(dirname(result.archivePath), { recursive: true, force: true });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("packDirectory writes the archive into a private per-run directory", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dockhold-pack-"));
+  try {
+    await writeFile(join(dir, "index.js"), "console.log('hi')\n");
+    const result = await packDirectory(dir);
+    const workDir = dirname(result.archivePath);
+
+    // Not dropped straight into the shared temp dir under a guessable name.
+    assert.notEqual(workDir, tmpdir());
+
+    // The per-run directory is owner-only, so the source archive cannot be
+    // read by other users on a shared machine (POSIX; skip the bit check on
+    // Windows, where mode is not meaningful).
+    if (process.platform !== "win32") {
+      const mode = (await stat(workDir)).mode & 0o777;
+      assert.equal(mode, 0o700, `expected 0700 work dir, got ${mode.toString(8)}`);
+    }
+
+    await rm(workDir, { recursive: true, force: true });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -69,7 +93,7 @@ test("packDirectory honors .dockholdignore over .gitignore", async () => {
     const names = await entriesOf(result.archivePath);
     assert.ok(!names.includes("a.txt"), ".dockholdignore exclusion applies");
     assert.ok(!names.includes("b.txt"), ".gitignore exclusion still applies");
-    await rm(result.archivePath, { force: true });
+    await rm(dirname(result.archivePath), { recursive: true, force: true });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

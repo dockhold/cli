@@ -4,12 +4,15 @@
 //
 // The archive is written to a temp file, not held in memory — a project can be
 // hundreds of MB (the default cap is 500 MB), and the file is streamed for both
-// the hash and the upload.
+// the hash and the upload. It lives inside a fresh mkdtemp directory (0700), so
+// on a shared machine no other user can read the source archive, and the path
+// is unguessable (a fixed name in the shared temp dir invites pre-creation).
+// The caller removes the whole directory when done.
 
 import { create } from "tar";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdtemp, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isEnvFile, isHardExcluded, loadIgnore, toRel } from "./ignore.js";
@@ -25,7 +28,8 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
   const ig = await loadIgnore(cwd);
   let foundEnv = false;
 
-  const archivePath = join(tmpdir(), `dockhold-source-${process.pid}-${Date.now()}.tgz`);
+  const workDir = await mkdtemp(join(tmpdir(), "dockhold-"));
+  const archivePath = join(workDir, "source.tgz");
 
   await create(
     {

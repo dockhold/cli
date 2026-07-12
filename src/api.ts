@@ -106,7 +106,9 @@ export type CompleteResult =
   | { ok: false; kind: "incomplete" | "too_large" | "other"; message: string; maxBytes?: number };
 
 // complete confirms the upload landed and kicks the build. 202 = building;
-// 409 "incomplete" = the object is missing (retry the PUT); 413 = over the cap.
+// 409 with code "source_missing" = the object is missing (retry the PUT);
+// 413 = over the cap. The machine-readable `code` field is authoritative; the
+// message regex is only a fallback for a controller that predates it.
 export async function complete(
   token: string,
   namespace: string,
@@ -119,9 +121,11 @@ export async function complete(
     body: JSON.stringify({ sha256, size_bytes: sizeBytes }),
   });
   if (res.status === 202) return { ok: true };
-  const body = (await res.json().catch(() => ({}))) as { error?: string; max_bytes?: number };
+  const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string; max_bytes?: number };
   const message = body.error || "Could not finish the deploy";
-  if (res.status === 409 && /incomplete/i.test(message)) return { ok: false, kind: "incomplete", message };
+  if (res.status === 409 && (body.code === "source_missing" || (!body.code && /incomplete/i.test(message)))) {
+    return { ok: false, kind: "incomplete", message };
+  }
   if (res.status === 413) return { ok: false, kind: "too_large", message, maxBytes: body.max_bytes };
   return { ok: false, kind: "other", message };
 }
