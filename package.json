@@ -1,7 +1,15 @@
 {
   "name": "dockhold",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Deploy an app to Dockhold from your computer. No GitHub, no Docker.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dockhold/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dockhold/cli/issues"
+  },
+  "homepage": "https://github.com/dockhold/cli#readme",
   "type": "module",
   "bin": {
     "dockhold": "dist/index.js"
