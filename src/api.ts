@@ -1,7 +1,7 @@
-// HTTP client for the controller's `/cli/*` surface (local-deploy-spec PR 3/4a).
+// HTTP client for the server's `/cli/*` surface.
 // Every authed call sends the deploy PAT as `Authorization: Bearer`. The archive
-// itself does NOT go through here — it is PUT straight to a presigned bucket URL
-// (trap #10), so the only large transfer bypasses the controller and Cloudflare.
+// itself does NOT go through here — it is PUT straight to a presigned upload URL,
+// so the only large transfer bypasses the API entirely.
 
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
@@ -31,8 +31,7 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
 }
 
 // exchangeCode redeems the single-use login code for a deploy token. This route
-// is unauthenticated by design — the code IS the credential (local-deploy-spec
-// D6 / PR 4a).
+// is unauthenticated by design — the code IS the credential.
 export async function exchangeCode(code: string): Promise<string> {
   const res = await fetch(`${API_URL}/cli/auth/exchange`, {
     method: "POST",
@@ -87,8 +86,8 @@ export async function presign(token: string, namespace: string, sha256: string):
   return { uploadUrl: body.upload_url, maxBytes: body.max_bytes ?? 0 };
 }
 
-// uploadArchive PUTs the archive straight to the presigned bucket URL. A torn
-// PUT never creates an object (S3 PUT is atomic), so the caller may retry.
+// uploadArchive PUTs the archive straight to the presigned upload URL. A torn
+// PUT never lands a partial upload (the PUT is atomic), so the caller may retry.
 export async function uploadArchive(uploadUrl: string, archivePath: string, sizeBytes: number): Promise<void> {
   const stream = Readable.toWeb(createReadStream(archivePath)) as ReadableStream<Uint8Array>;
   const res = await fetch(uploadUrl, {
@@ -106,7 +105,9 @@ export type CompleteResult =
   | { ok: false; kind: "incomplete" | "too_large" | "other"; message: string; maxBytes?: number };
 
 // complete confirms the upload landed and kicks the build. 202 = building;
-// 409 "incomplete" = the object is missing (retry the PUT); 413 = over the cap.
+// 409 with code "source_missing" = the object is missing (retry the PUT);
+// 413 = over the cap. The machine-readable `code` field is authoritative; the
+// message regex is only a fallback for a controller that predates it.
 export async function complete(
   token: string,
   namespace: string,
@@ -119,9 +120,11 @@ export async function complete(
     body: JSON.stringify({ sha256, size_bytes: sizeBytes }),
   });
   if (res.status === 202) return { ok: true };
-  const body = (await res.json().catch(() => ({}))) as { error?: string; max_bytes?: number };
+  const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string; max_bytes?: number };
   const message = body.error || "Could not finish the deploy";
-  if (res.status === 409 && /incomplete/i.test(message)) return { ok: false, kind: "incomplete", message };
+  if (res.status === 409 && (body.code === "source_missing" || (!body.code && /incomplete/i.test(message)))) {
+    return { ok: false, kind: "incomplete", message };
+  }
   if (res.status === 413) return { ok: false, kind: "too_large", message, maxBytes: body.max_bytes };
   return { ok: false, kind: "other", message };
 }

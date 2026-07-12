@@ -20,7 +20,8 @@ the current folder, uploads it, and prints your app's URL when it is live. Run
 ## Commands
 
 ```
-dockhold login [--token <token>]        Sign in (or paste an access token)
+dockhold login [--token [<token>]]      Sign in (a bare --token prompts for a
+                                        paste, keeping it out of shell history)
 dockhold deploy [--name <name>]         Deploy the current folder
                [--env KEY=VALUE ...]    Set an environment variable (repeatable)
                [--db]                   Add a managed database

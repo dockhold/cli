@@ -1,4 +1,4 @@
-// Tiny argv helpers. No CLI framework (local-deploy-spec D7 — keep deps minimal),
+// Tiny argv helpers. No CLI framework (keep deps minimal),
 // so flag parsing is done by hand.
 
 // flagValue reads `--name value` or `--name=value`, returning the first match.
@@ -42,7 +42,7 @@ export function sleep(ms: number): Promise<void> {
 }
 
 // mb renders a byte cap as whole megabytes for user-facing size messages, so the
-// copy never drifts from the server's configured limit (local-deploy-spec D11).
+// copy never drifts from the server's configured limit.
 export function mb(bytes: number): number {
   return Math.round(bytes / (1024 * 1024));
 }
