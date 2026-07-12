@@ -1,0 +1,40 @@
+{
+  "name": "dockhold",
+  "version": "0.1.0",
+  "description": "Deploy an app to Dockhold from your computer. No GitHub, no Docker.",
+  "type": "module",
+  "bin": {
+    "dockhold": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "dockhold",
+    "deploy",
+    "hosting",
+    "paas",
+    "cli"
+  ],
+  "license": "UNLICENSED",
+  "private": false,
+  "dependencies": {
+    "ignore": "^5.3.2",
+    "tar": "^7.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}
