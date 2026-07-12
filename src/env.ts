@@ -1,6 +1,5 @@
-// Endpoints the CLI talks to. Defaults point at production; the three overrides
-// let a developer aim the CLI at a dev controller during the ENABLE_LOCAL_DEPLOY
-// soak (local-deploy-spec §6 step 2).
+// Endpoints the CLI talks to. Defaults point at production; the overrides let a
+// developer aim the CLI at a different environment for testing.
 
 function trimSlashes(url: string): string {
   return url.replace(/\/+$/, "");

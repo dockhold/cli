@@ -1,4 +1,4 @@
-// `dockhold deploy` — the whole push flow (local-deploy-spec §4, PR 4):
+// `dockhold deploy` — the whole push flow:
 //   resolve/create app -> pack -> presign -> upload -> complete -> poll to done.
 
 import { basename, dirname, join } from "node:path";
@@ -76,7 +76,7 @@ export async function deploy(args: string[]): Promise<number> {
     }
 
     // 3. Presign. The response carries the size cap, so refuse over-size here,
-    //    before uploading a single byte (D8).
+    //    before uploading a single byte.
     let link;
     try {
       link = await presign(token, namespace, pack.sha256);
@@ -91,8 +91,8 @@ export async function deploy(args: string[]): Promise<number> {
       return 1;
     }
 
-    // 4. Upload straight to the bucket, then confirm. Re-push once on the
-    //    "incomplete" answer (a torn PUT leaves no object).
+    // 4. Upload straight to the presigned URL, then confirm. Re-push once on
+    //    the "incomplete" answer (a torn PUT leaves nothing behind).
     info("Uploading.");
     const pushed = await uploadAndConfirm(token, namespace, pack, link.uploadUrl);
     if (!pushed.ok) {
@@ -126,7 +126,7 @@ interface ResolvedName {
 
 // resolveName picks the app name: --name, then dockhold.json "name", then the
 // sanitized folder name. It fails (rather than prompting) when nothing is
-// derivable — interactivity breaks AI-tool usage (open-question 4).
+// derivable — interactivity breaks AI-tool usage.
 async function resolveName(cwd: string, args: string[]): Promise<ResolvedName> {
   const explicit = flagValue(args, "--name");
   if (explicit) {

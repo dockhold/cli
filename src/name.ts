@@ -1,7 +1,7 @@
 // Client-side mirror of the controller's sanitizeAppName / ValidateAppName
 // (apps/controller/main.go). Kept byte-for-byte in step so the CLI can derive a
 // name from a folder and fail fast with the same rules the server enforces
-// (local-deploy-spec PR 4). If the Go rules change, change these too.
+// If the server rules change, change these too.
 
 export const APP_NAME_MAX_RAW = 64; // appNameMaxRawLen
 export const APP_NAME_MAX_CLEAN = 52; // appNameMaxCleanLen

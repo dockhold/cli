@@ -1,8 +1,8 @@
 // Access-token storage. The token is a `dh_mcp_*` deploy-scoped PAT minted by the
-// login exchange (local-deploy-spec D6). It is written 0600 under the user's
+// login exchange. It is written 0600 under the user's
 // config dir and NEVER logged.
 //
-// Resolution order at call time: DOCKHOLD_TOKEN env var (the D6 fallback / CI
+// Resolution order at call time: DOCKHOLD_TOKEN env var (the fallback / CI
 // path) wins over the saved file.
 
 import { homedir } from "node:os";

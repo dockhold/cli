@@ -1,4 +1,4 @@
-// Packing rules (local-deploy-spec D8, trap #8). Two layers:
+// Packing rules. Two layers:
 //
 //  1. Hard excludes that are NON-NEGOTIABLE: `.git`, `node_modules`, `.dockhold`,
 //     and every `.env*` file. These are enforced directly, BEFORE any ignore
@@ -17,7 +17,7 @@ import { join } from "node:path";
 // createRequire hands back the real callable factory the runtime exports.
 const ignore = createRequire(import.meta.url)("ignore") as (opts?: unknown) => Ignore;
 
-// isEnvFile matches `.env` and `.env.<anything>` (the `.env*` glob in D8).
+// isEnvFile matches `.env` and `.env.<anything>` (the `.env*` glob).
 export function isEnvFile(basename: string): boolean {
   return basename === ".env" || basename.startsWith(".env.");
 }

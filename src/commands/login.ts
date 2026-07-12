@@ -1,7 +1,7 @@
-// `dockhold login` — the D6 exchange-code browser flow (RFC 8252 native-app
+// `dockhold login` — an exchange-code browser flow (RFC 8252 native-app
 // shape), with a `--token` paste fallback.
 //
-// Security shape (local-deploy-spec D6, CLI-side must-fixes):
+// Security shape:
 //   * the loopback server binds 127.0.0.1 ONLY and closes as soon as it has
 //     served one VALID callback;
 //   * a random `state` nonce is generated here and MUST match on the callback.
