@@ -72,6 +72,10 @@ export async function createApp(token: string, input: CreateAppInput): Promise<s
 export interface PresignResult {
   uploadUrl: string;
   maxBytes: number;
+  // Whether this account can build a project that ships no Dockerfile. Older
+  // servers omit it; `undefined` means "unknown", and the caller must not turn
+  // an unknown into a refusal.
+  autoBuild?: boolean;
 }
 
 export async function presign(token: string, namespace: string, sha256: string): Promise<PresignResult> {
@@ -81,9 +85,13 @@ export async function presign(token: string, namespace: string, sha256: string):
     body: JSON.stringify({ sha256 }),
   });
   if (!res.ok) throw new ApiError(res.status, await errorMessage(res, "Could not prepare the upload"));
-  const body = (await res.json()) as { upload_url?: string; max_bytes?: number };
+  const body = (await res.json()) as { upload_url?: string; max_bytes?: number; auto_build?: boolean };
   if (!body.upload_url) throw new ApiError(500, "Server did not return an upload link");
-  return { uploadUrl: body.upload_url, maxBytes: body.max_bytes ?? 0 };
+  return {
+    uploadUrl: body.upload_url,
+    maxBytes: body.max_bytes ?? 0,
+    autoBuild: typeof body.auto_build === "boolean" ? body.auto_build : undefined,
+  };
 }
 
 // uploadArchive PUTs the archive straight to the presigned upload URL. A torn

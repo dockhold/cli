@@ -6,6 +6,7 @@ import { readFile, rm } from "node:fs/promises";
 import { loadToken } from "../config.js";
 import { readState, writeState, ensureGitignoreEntry } from "../state.js";
 import { packDirectory, type PackResult } from "../pack.js";
+import { hasOwnBuildFile, NO_DOCKERFILE_MESSAGE } from "../buildsource.js";
 import { sanitizeAppName, validateAppName } from "../name.js";
 import {
   ApiError,
@@ -88,6 +89,16 @@ export async function deploy(args: string[]): Promise<number> {
       err(
         `Your upload is over ${mb(link.maxBytes)} MB. Exclude build artifacts and dependency folders, then try again.`,
       );
+      return 1;
+    }
+
+    // Stack detection is a paid feature. Without it, a folder that ships no
+    // Dockerfile has a build that cannot start, and uploading first only means
+    // the person waits several minutes to hear it. `autoBuild` is undefined on
+    // an older server: unknown is not a refusal, so let the deploy run and let
+    // the build answer, exactly as it did before.
+    if (link.autoBuild === false && !(await hasOwnBuildFile(cwd))) {
+      err(NO_DOCKERFILE_MESSAGE);
       return 1;
     }
 
