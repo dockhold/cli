@@ -4,7 +4,11 @@ Put your app online straight from your computer. No GitHub, no Docker, no setup.
 
 Point the CLI at a project folder and it uploads your code, builds it, and gives
 you a live URL. If your project has a Dockerfile it uses that. If it does not,
-Dockhold detects your stack and builds it for you.
+Dockhold detects your stack and builds it for you, on any account with compute
+added (from $5/month). On a free account, add a Dockerfile at the root of your
+folder: without one the deploy stops before it uploads and tells you what to
+add. There are examples to copy at
+https://dockhold.eu/docs/concepts/dockerfiles.
 
 ## Quickstart
 
@@ -41,6 +45,27 @@ The CLI packs your project folder, with a few things always left out:
 
 You can add a `.dockholdignore` file (same format as `.gitignore`) to exclude
 more. It takes priority over `.gitignore`.
+
+## How your folder gets built
+
+The build picks its instructions in this order:
+
+1. A `Dockerfile` at the root of the folder.
+2. A `dockhold.json` at the root pointing at one:
+
+```json
+{
+  "build": {
+    "dockerfile": "docker/Dockerfile.prod"
+  }
+}
+```
+
+3. Automatic stack detection (Node, Python, Go, Rust, Ruby, Deno, Bun, Java,
+   PHP), on accounts with compute added.
+
+Free accounts stop at step 2. If neither file is there, `deploy` says so before
+uploading anything, so nothing is half-done while you go add one.
 
 ## Environment variables
 
