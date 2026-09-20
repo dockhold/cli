@@ -1,4 +1,4 @@
-// `dockhold login` — an exchange-code browser flow (RFC 8252 native-app
+// `dockhold login`: an exchange-code browser flow (RFC 8252 native-app
 // shape), with a `--token` paste fallback.
 //
 // Security shape:
@@ -10,45 +10,70 @@
 //     letting a forged request kill the flow would deny real sign-ins (and push
 //     users toward the weaker --token paste path). Only the timeout or a valid
 //     callback ends the wait;
-//   * the browser is handed back a single-use CODE, never a token — the token is
+//   * the browser is handed back a single-use CODE, never a token. The token is
 //     fetched by POSTing the code to /cli/auth/exchange, so no token ever travels
 //     in a URL or lands in browser history;
 //   * a ~5 min timeout bounds the wait;
 //   * the token is never logged.
+//
+// The token is saved together with the API host it was exchanged at, so the
+// other commands (and `dockhold mcp`) send it to the place that issued it.
 
 import http from "node:http";
 import readline from "node:readline";
 import { randomBytes } from "node:crypto";
 import { URL } from "node:url";
-import { DASHBOARD_URL } from "../env.js";
-import { exchangeCode } from "../api.js";
-import { saveToken, validateTokenShape } from "../config.js";
+import { dashboardUrl } from "../env.js";
+import { apiBase, exchangeCode } from "../api.js";
+import { saveConfig, validateTokenShape } from "../config.js";
 import { openBrowser } from "../browser.js";
 import { flagValue, hasFlag } from "../args.js";
+import { refSlug } from "../ref.js";
 import { err, info } from "../output.js";
 
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
-export async function login(args: string[]): Promise<number> {
+// authorizeUrl is the dashboard page the browser opens. The `ref` slug tells
+// the dashboard where the sign-in came from; see src/ref.ts.
+export function authorizeUrl(
+  dashboard: string,
+  state: string,
+  port: number,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return `${dashboard}/cli-auth?state=${encodeURIComponent(state)}&port=${port}&ref=${refSlug(env)}`;
+}
+
+export interface LoginDeps {
+  browserFlow: () => Promise<string>;
+  exchangeCode: (code: string) => Promise<string>;
+  apiBase: () => Promise<string>;
+  saveConfig: (cfg: { token: string; apiUrl: string }) => Promise<string>;
+  readTokenFromStdin: () => Promise<string>;
+}
+
+const defaultDeps: LoginDeps = { browserFlow, exchangeCode, apiBase, saveConfig, readTokenFromStdin };
+
+export async function login(args: string[], deps: LoginDeps = defaultDeps): Promise<number> {
   if (hasFlag(args, "--token")) {
     // A bare `--token` reads the value from stdin, keeping it out of shell
     // history and the process list. `--token <value>` still works as the
     // documented fallback.
-    const raw = flagValue(args, "--token") ?? (await readTokenFromStdin());
+    const raw = flagValue(args, "--token") ?? (await deps.readTokenFromStdin());
     const token = raw.trim();
     const bad = validateTokenShape(token);
     if (bad) {
       err(bad);
       return 1;
     }
-    await saveToken(token);
+    await deps.saveConfig({ token, apiUrl: await deps.apiBase() });
     info("Saved your access token.");
     return 0;
   }
 
   let code: string;
   try {
-    code = await browserFlow();
+    code = await deps.browserFlow();
   } catch (e) {
     err(`Sign-in did not complete: ${(e as Error).message}`);
     err("You can also paste a token: dockhold login --token <your token>");
@@ -56,8 +81,11 @@ export async function login(args: string[]): Promise<number> {
   }
 
   try {
-    const token = await exchangeCode(code);
-    await saveToken(token);
+    // Resolve the host before the exchange so the saved host is exactly the
+    // one the code was redeemed at.
+    const apiUrl = await deps.apiBase();
+    const token = await deps.exchangeCode(code);
+    await deps.saveConfig({ token, apiUrl });
     info('You are signed in. Run "dockhold deploy" from your project folder.');
     return 0;
   } catch (e) {
@@ -120,7 +148,7 @@ function browserFlow(): Promise<string> {
     server.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       const port = typeof addr === "object" && addr ? addr.port : 0;
-      const authUrl = `${DASHBOARD_URL}/cli-auth?state=${encodeURIComponent(state)}&port=${port}`;
+      const authUrl = authorizeUrl(dashboardUrl(), state, port);
       info("Opening your browser to sign in.");
       info(`If it does not open, visit this link:\n  ${authUrl}`);
       openBrowser(authUrl);

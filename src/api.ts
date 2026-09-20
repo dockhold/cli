@@ -1,11 +1,31 @@
 // HTTP client for the server's `/cli/*` surface.
 // Every authed call sends the deploy PAT as `Authorization: Bearer`. The archive
-// itself does NOT go through here — it is PUT straight to a presigned upload URL,
+// itself does NOT go through here: it is PUT straight to a presigned upload URL,
 // so the only large transfer bypasses the API entirely.
 
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
-import { API_URL } from "./env.js";
+import { hostNotice, resolveApiUrl } from "./env.js";
+import { loadConfig } from "./config.js";
+import { err } from "./output.js";
+
+// apiBase resolves the API host once per process: DOCKHOLD_API_URL, else the
+// host saved next to the token by the last login, else the default. A saved
+// host that is not the default is announced on stderr, so a login against a
+// different environment never silently steers the next deploy.
+let resolvedBase: Promise<string> | null = null;
+export function apiBase(): Promise<string> {
+  if (!resolvedBase) {
+    resolvedBase = (async () => {
+      const saved = await loadConfig();
+      const host = resolveApiUrl(process.env, saved.apiUrl);
+      const notice = hostNotice(host);
+      if (notice) err(notice);
+      return host.url;
+    })();
+  }
+  return resolvedBase;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -31,9 +51,9 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
 }
 
 // exchangeCode redeems the single-use login code for a deploy token. This route
-// is unauthenticated by design — the code IS the credential.
+// is unauthenticated by design: the code IS the credential.
 export async function exchangeCode(code: string): Promise<string> {
-  const res = await fetch(`${API_URL}/cli/auth/exchange`, {
+  const res = await fetch(`${await apiBase()}/cli/auth/exchange`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code }),
@@ -53,7 +73,7 @@ export interface CreateAppInput {
 // createApp provisions an upload-source app and returns its namespace. No build
 // runs yet; the app sits at AWAITING_SOURCE until the first source/complete.
 export async function createApp(token: string, input: CreateAppInput): Promise<string> {
-  const res = await fetch(`${API_URL}/cli/build`, {
+  const res = await fetch(`${await apiBase()}/cli/build`, {
     method: "POST",
     headers: authHeaders(token),
     body: JSON.stringify({
@@ -79,7 +99,7 @@ export interface PresignResult {
 }
 
 export async function presign(token: string, namespace: string, sha256: string): Promise<PresignResult> {
-  const res = await fetch(`${API_URL}/cli/apps/${encodeURIComponent(namespace)}/source/presign`, {
+  const res = await fetch(`${await apiBase()}/cli/apps/${encodeURIComponent(namespace)}/source/presign`, {
     method: "POST",
     headers: authHeaders(token),
     body: JSON.stringify({ sha256 }),
@@ -122,7 +142,7 @@ export async function complete(
   sha256: string,
   sizeBytes: number,
 ): Promise<CompleteResult> {
-  const res = await fetch(`${API_URL}/cli/apps/${encodeURIComponent(namespace)}/source/complete`, {
+  const res = await fetch(`${await apiBase()}/cli/apps/${encodeURIComponent(namespace)}/source/complete`, {
     method: "POST",
     headers: authHeaders(token),
     body: JSON.stringify({ sha256, size_bytes: sizeBytes }),
@@ -147,7 +167,7 @@ export interface AppSummary {
 }
 
 export async function listApps(token: string): Promise<AppSummary[]> {
-  const res = await fetch(`${API_URL}/cli/apps`, { headers: authHeaders(token) });
+  const res = await fetch(`${await apiBase()}/cli/apps`, { headers: authHeaders(token) });
   if (!res.ok) throw new ApiError(res.status, await errorMessage(res, "Could not list your apps"));
   const body = (await res.json()) as { apps?: AppSummary[] };
   return body.apps ?? [];
@@ -162,7 +182,7 @@ export async function getLogs(
   if (opts.type) params.set("type", opts.type);
   if (opts.tail) params.set("tail", String(opts.tail));
   const qs = params.toString();
-  const url = `${API_URL}/cli/apps/${encodeURIComponent(namespace)}/logs${qs ? "?" + qs : ""}`;
+  const url = `${await apiBase()}/cli/apps/${encodeURIComponent(namespace)}/logs${qs ? "?" + qs : ""}`;
   const res = await fetch(url, { headers: authHeaders(token) });
   if (!res.ok) throw new ApiError(res.status, await errorMessage(res, "Could not fetch logs"));
   const body = (await res.json()) as { logs?: string };
