@@ -19,7 +19,7 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=18.19"
   },
   "scripts": {
     "build": "tsc",

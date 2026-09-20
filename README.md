@@ -45,7 +45,12 @@ behalf. It ignores `DOCKHOLD_API_URL`, `DOCKHOLD_TOKEN`, `HOME` and
 environment variables for the servers it declares, and honouring them there
 would let a repository point the bridge at another host, or at another
 account, with your sign-in. The host and the token come from your own config
-file only, and the host must be https.
+file only, and the host must be https. It also refuses to send your sign-in
+while `NODE_TLS_REJECT_UNAUTHORIZED=0` is set, since that turns certificate
+checks off. What it cannot cover: the same config block can set `NODE_OPTIONS`
+(which runs code before the bridge starts) or `NODE_EXTRA_CA_CERTS`, and the
+command line itself; your client's approval prompt for a new server is the
+place to look at those before saying yes.
 
 `npx -y dockhold` downloads the package on first run. If your client gives a
 server only a few seconds to start, install it once with `npm i -g dockhold`
@@ -127,12 +132,14 @@ set, else that saved host, else the default, and tell you on stderr when they
 are using a saved host that is not the default.
 
 `~` here is the home directory the operating system reports for your user,
-not `HOME` or `XDG_CONFIG_HOME`. `dockhold mcp` reads none of the variables
-above except `DOCKHOLD_REF`.
+not `HOME` or `XDG_CONFIG_HOME`. The other commands fall back to `HOME` only
+if the operating system has no record of your user; `dockhold mcp` never
+does, and says so on stderr. `dockhold mcp` reads none of the variables above
+except `DOCKHOLD_REF`.
 
 ## Requirements
 
-Node.js 18 or newer.
+Node.js 18.19 or newer.
 
 ## Changelog
 
