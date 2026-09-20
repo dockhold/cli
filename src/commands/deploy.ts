@@ -1,4 +1,4 @@
-// `dockhold deploy` — the whole push flow:
+// `dockhold deploy`: the whole push flow:
 //   resolve/create app -> pack -> presign -> upload -> complete -> poll to done.
 
 import { basename, dirname, join } from "node:path";
@@ -111,7 +111,7 @@ export async function deploy(args: string[]): Promise<number> {
       return 1;
     }
   } finally {
-    // The archive lives in its own mkdtemp directory — remove the whole thing.
+    // The archive lives in its own mkdtemp directory; remove the whole thing.
     await rm(dirname(pack.archivePath), { recursive: true, force: true }).catch(() => {});
   }
 
@@ -123,11 +123,19 @@ export async function deploy(args: string[]): Promise<number> {
     return 0;
   }
   if (result.status === "ERROR") {
-    err(`\nThe deploy failed.${result.message ? "\n" + result.message : ""}`);
+    err(failureMessage(result.message));
     return 1;
   }
   info('\nStill building. Check on it later with "dockhold list".');
   return 0;
+}
+
+// failureMessage is what a failed deploy prints: the server's reason when it
+// gave one, then where to look next. The hint matters most when an AI tool is
+// driving the CLI: it turns a dead end into the next command to run.
+export function failureMessage(serverMessage?: string): string {
+  const reason = serverMessage?.trim() ? "\n" + serverMessage.trim() : "";
+  return `\nThe deploy failed.${reason}\nRun "npx dockhold logs --type build" to see why.`;
 }
 
 interface ResolvedName {
@@ -137,7 +145,7 @@ interface ResolvedName {
 
 // resolveName picks the app name: --name, then dockhold.json "name", then the
 // sanitized folder name. It fails (rather than prompting) when nothing is
-// derivable — interactivity breaks AI-tool usage.
+// derivable, because interactivity breaks AI-tool usage.
 async function resolveName(cwd: string, args: string[]): Promise<ResolvedName> {
   const explicit = flagValue(args, "--name");
   if (explicit) {
