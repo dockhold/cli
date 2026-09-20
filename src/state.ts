@@ -1,7 +1,7 @@
 // Per-project state: `.dockhold/app.json` records the namespace (the canonical
 // app id) so a second `dockhold deploy` in the same folder pushes a new version
 // of the SAME app instead of creating a duplicate. On first create we also add
-// `.dockhold/` to an existing `.gitignore` (never create one — that's the user's
+// `.dockhold/` to an existing `.gitignore` (never create one; that's the user's
 // call).
 
 import { join } from "node:path";
@@ -44,7 +44,7 @@ export async function ensureGitignoreEntry(cwd: string, entry = ".dockhold/"): P
   try {
     await access(gitignore);
   } catch {
-    return; // no .gitignore — leave the folder alone
+    return; // no .gitignore, leave the folder alone
   }
   const raw = await readFile(gitignore, "utf8");
   const lines = raw.split(/\r?\n/).map((l) => l.trim());

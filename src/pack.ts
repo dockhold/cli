@@ -2,7 +2,7 @@
 // exclusion rules (see ignore.ts), and returns the archive path, its sha256 (computed
 // locally, then handed to the server for the presign + verify), and its size.
 //
-// The archive is written to a temp file, not held in memory — a project can be
+// The archive is written to a temp file, not held in memory: a project can be
 // hundreds of MB (the default cap is 500 MB), and the file is streamed for both
 // the hash and the upload. It lives inside a fresh mkdtemp directory (0700), so
 // on a shared machine no other user can read the source archive, and the path
@@ -21,7 +21,7 @@ export interface PackResult {
   archivePath: string;
   sha256: string;
   sizeBytes: number;
-  foundEnv: boolean; // true if a .env* file was seen (and skipped) — drives the notice
+  foundEnv: boolean; // true if a .env* file was seen (and skipped); drives the notice
 }
 
 export async function packDirectory(cwd: string): Promise<PackResult> {

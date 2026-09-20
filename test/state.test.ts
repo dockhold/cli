@@ -30,7 +30,7 @@ test("ensureGitignoreEntry appends .dockhold/ only when a .gitignore exists", as
     let content = await readFile(join(dir, ".gitignore"), "utf8");
     assert.ok(content.includes(".dockhold/"));
 
-    // Idempotent — a second call does not duplicate the entry.
+    // Idempotent: a second call does not duplicate the entry.
     await ensureGitignoreEntry(dir);
     content = await readFile(join(dir, ".gitignore"), "utf8");
     assert.equal(content.match(/\.dockhold\//g)?.length, 1);

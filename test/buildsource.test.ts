@@ -57,5 +57,5 @@ test("the message states the fix before the upgrade", async () => {
   const upsell = NO_DOCKERFILE_MESSAGE.indexOf("compute unit");
   assert.ok(fix > -1 && upsell > -1 && fix < upsell);
   assert.match(NO_DOCKERFILE_MESSAGE, /docs\/concepts\/dockerfiles/);
-  assert.ok(!NO_DOCKERFILE_MESSAGE.includes("—"), "no em-dashes in user-facing copy");
+  assert.ok(!NO_DOCKERFILE_MESSAGE.includes("\u2014"), "no em-dashes in user-facing copy");
 });
