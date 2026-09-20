@@ -1,7 +1,7 @@
 {
   "name": "dockhold",
-  "version": "0.1.1",
-  "description": "Deploy an app to Dockhold from your computer. No GitHub, no Docker.",
+  "version": "0.2.0",
+  "description": "Deploy an app to Dockhold from your computer or your AI tool. No GitHub, no Docker.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/dockhold/cli.git"
@@ -24,6 +24,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "pretest": "npm run build",
     "test": "node --import tsx --test test/*.test.ts",
     "prepublishOnly": "npm run build"
   },
@@ -32,7 +33,9 @@
     "deploy",
     "hosting",
     "paas",
-    "cli"
+    "cli",
+    "mcp",
+    "ai"
   ],
   "license": "UNLICENSED",
   "private": false,
