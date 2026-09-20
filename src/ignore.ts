@@ -52,7 +52,7 @@ export async function loadIgnore(cwd: string): Promise<Ignore> {
     try {
       ig.add(await readFile(join(cwd, file), "utf8"));
     } catch {
-      // absent — nothing to add
+      // absent, nothing to add
     }
   }
   return ig;
