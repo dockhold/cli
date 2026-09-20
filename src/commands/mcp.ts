@@ -32,12 +32,20 @@
 // "run login" hint; it is checked against a strict pattern (src/ref.ts) so
 // nothing else can be pushed into that text.
 //
+// Ignoring the environment is not being immune to it. The same block can
+// still set NODE_OPTIONS (which runs the repository's code before this
+// file's first line) or NODE_EXTRA_CA_CERTS (which also needs a position on
+// the network to matter); the client's approval prompt for a new server is
+// the control for those. NODE_TLS_REJECT_UNAUTHORIZED=0 is the one Node
+// reads that would quietly undo "https only", so the bridge refuses to send
+// the sign-in while it is set (see mcp()).
+//
 // stdout is the wire: nothing but JSON-RPC is ever written there. Every
 // diagnostic goes to stderr through the injected writer. This file imports no
 // output helper on purpose (src/output.ts writes to stdout).
 
 import readline from "node:readline";
-import { DEFAULT_API_URL } from "../env.js";
+import { DEFAULT_API_URL, plainHttpsUrl } from "../env.js";
 import { osHomeDir, readConfigChecked, type ConfigRead } from "../config.js";
 import { validRef } from "../ref.js";
 
@@ -55,7 +63,7 @@ const RATE_LIMITED = -32029;
 
 const BUSY_TEXT = "Dockhold is busy, try again in a few seconds.";
 const NOT_HTTPS_TEXT =
-  'Your saved Dockhold API host is not https, so "dockhold mcp" will not use it. Sign in again with "npx dockhold login" against an https host.';
+  'Your saved Dockhold API host is not a plain https address, so "dockhold mcp" will not use it. Sign in again with "npx dockhold login" against an https host.';
 
 type Env = Record<string, string | undefined>;
 
@@ -78,6 +86,9 @@ export interface BridgeDeps {
   stderr: (line: string) => void;
   // Only DOCKHOLD_REF is ever read from this. index.ts passes exactly that key.
   env: Env;
+  // When set, the sign-in is never sent: tool calls get this text and only
+  // introspection goes out, anonymously, to the default host.
+  refusal?: string;
 }
 
 type JsonRpcId = string | number | null;
@@ -118,6 +129,10 @@ export function createBridge(deps: BridgeDeps): Bridge {
   // session re-reads the config for every message, so a login in another
   // terminal is picked up without restarting the client.
   async function session(): Promise<Session> {
+    if (deps.refusal) {
+      status(`${deps.refusal} Host ${DEFAULT_API_URL} for the tool list; tool calls refused.`);
+      return { host: DEFAULT_API_URL, token: null, refused: deps.refusal };
+    }
     const cfg = await deps.readConfig();
     if (!cfg.ok) {
       status(
@@ -125,13 +140,13 @@ export function createBridge(deps: BridgeDeps): Bridge {
       );
       return { host: DEFAULT_API_URL, token: null, refused: null };
     }
-    if (cfg.apiUrl && !cfg.apiUrl.startsWith("https://")) {
+    const host = cfg.apiUrl ? plainHttpsUrl(cfg.apiUrl) : DEFAULT_API_URL;
+    if (host === null) {
       status(
-        `ignoring the API host in ${cfg.path}: it is not https. Host ${DEFAULT_API_URL} for the tool list; tool calls refused until you sign in again.`,
+        `ignoring the API host in ${cfg.path}: it is not a plain https address. Host ${DEFAULT_API_URL} for the tool list; tool calls refused until you sign in again.`,
       );
       return { host: DEFAULT_API_URL, token: null, refused: NOT_HTTPS_TEXT };
     }
-    const host = cfg.apiUrl ?? DEFAULT_API_URL;
     if (cfg.token) status(`host ${host}, sign-in from ${cfg.path}`);
     else status(`host ${host}, no sign-in at ${cfg.path}; tool calls will ask you to run "npx dockhold login".`);
     return { host, token: cfg.token, refused: null };
@@ -156,9 +171,9 @@ export function createBridge(deps: BridgeDeps): Bridge {
     | { kind: "fail"; code: number; text: string }
     | { kind: "ok"; body: string; parsed: unknown; rewritten: boolean };
 
-  // forward POSTs one body and classifies what came back. `requests` are the
-  // elements in the body that carry an id, for the 401 decision.
-  async function forward(body: string, requests: Message[], s: Session): Promise<Forwarded> {
+  // forward POSTs one body and classifies what came back. `elements` are
+  // the parsed elements of that body, for the 401 decision.
+  async function forward(body: string, elements: unknown[], s: Session): Promise<Forwarded> {
     let res: Response;
     try {
       res = await post(s.host, body, s.token);
@@ -172,7 +187,10 @@ export function createBridge(deps: BridgeDeps): Bridge {
       // the tools are listed; the next tool call is what tells the user to
       // sign in again. A client that saw initialize fail would mark the
       // server dead and the user would never see that message.
-      const introspectionOnly = requests.every((m) => INTROSPECTION.has(String(m.method)));
+      // Every element of the body is checked, notifications included: a
+      // notification rides along on the anonymous retry, so it must be one
+      // the server accepts without a sign-in too.
+      const introspectionOnly = elements.every(isIntrospection);
       if (!introspectionOnly) return { kind: "fail", code: AUTH_ERROR, text: expiredText(deps.env) };
       await res.text().catch(() => "");
       try {
@@ -272,7 +290,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
     if (!isBatch) {
       if (local.length > 0) return serialize(local[0]);
       if (remote.length === 0) return null;
-      const out = await forward(trimmed, remoteRequests, s);
+      const out = await forward(trimmed, remote, s);
       if (out.kind === "empty") return null;
       if (out.kind === "fail") {
         const request = remoteRequests[0];
@@ -291,7 +309,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
     // a batch that produced exactly one response, so normalise that.
     const responses: unknown[] = [...local];
     if (remote.length > 0) {
-      const out = await forward(JSON.stringify(remote), remoteRequests, s);
+      const out = await forward(JSON.stringify(remote), remote, s);
       if (out.kind === "fail") {
         for (const m of remoteRequests) responses.push(failResponse(m, out.code, out.text));
       } else if (out.kind === "ok") {
@@ -331,6 +349,15 @@ function failResponse(m: Message, code: number, text: string): object {
 
 function errorResponse(id: JsonRpcId, code: number, message: string): object {
   return { jsonrpc: "2.0", id, error: { code, message } };
+}
+
+// isIntrospection: an element the server answers without a sign-in, or a
+// notification (which it accepts from anyone and answers with nothing).
+function isIntrospection(el: unknown): boolean {
+  if (!el || typeof el !== "object" || Array.isArray(el)) return false;
+  const method = (el as Message).method;
+  if (typeof method !== "string") return false;
+  return INTROSPECTION.has(method) || method.startsWith("notifications/");
 }
 
 function hasId(m: Message): boolean {
@@ -437,8 +464,9 @@ export async function runMcp(io: McpIO, deps: BridgeDeps): Promise<number> {
 }
 
 // mcp is the command entry. It hands the bridge the real fetch, the checked
-// config reader on the OS home, a stderr writer, and ONLY the one environment
-// variable it may read.
+// config reader on the OS home, a stderr writer, the one environment variable
+// it may read, and a refusal when the environment has turned certificate
+// checks off.
 export function mcp(): Promise<number> {
   process.stdout.on("error", (e: NodeJS.ErrnoException) => {
     // The client went away. Nothing left to say, and nowhere to say it.
@@ -451,6 +479,12 @@ export function mcp(): Promise<number> {
       readConfig: () => readConfigChecked({ homedir: osHomeDir }),
       stderr: (line) => process.stderr.write(line + "\n"),
       env: { DOCKHOLD_REF: process.env.DOCKHOLD_REF },
+      // Node, not the bridge, reads this one, and with it set "https only"
+      // no longer means the sign-in reaches Dockhold. Refuse to send it.
+      refusal:
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0"
+          ? 'NODE_TLS_REJECT_UNAUTHORIZED=0 is set for this server, which turns certificate checks off, so "dockhold mcp" will not send your sign-in. Remove it from the MCP config and restart the server.'
+          : undefined,
     },
   );
 }

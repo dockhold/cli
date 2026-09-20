@@ -80,6 +80,10 @@ export async function saveConfig(
 ): Promise<string> {
   const path = configPathFor(home);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  // mkdir's mode only applies when it creates the folder. A folder that was
+  // already there (0755 from an older version, or from a copy) would make
+  // `mcp` refuse the file forever, so force the mode on the folder too.
+  await chmod(dirname(path), 0o700);
   await writeFile(path, JSON.stringify({ token: cfg.token, apiUrl: cfg.apiUrl }, null, 2) + "\n", {
     mode: 0o600,
   });
@@ -171,8 +175,16 @@ export async function readConfigChecked(opts: CheckedReadOptions): Promise<Confi
   let parsed: StoredConfig;
   try {
     parsed = parseConfig(await readFn(path, "utf8"));
-  } catch (e) {
-    return { ok: false, path, reason: `it is not valid JSON (${(e as Error).message})` };
+  } catch {
+    // Not the parser's message: on newer Node versions it quotes the first
+    // bytes of the file, which for a bare token would be the token.
+    return { ok: false, path, reason: "it is not valid JSON" };
+  }
+  // A token is printable ASCII. Anything else (a control character from a
+  // mangled paste, say) would make the HTTP layer throw with the header
+  // value, that is the token, in the error message. Refuse it here instead.
+  if (parsed.token && !/^[\x21-\x7e]+$/.test(parsed.token)) {
+    return { ok: false, path, reason: "the saved token contains characters a Dockhold token cannot have; sign in again" };
   }
   return { ok: true, path, token: parsed.token, apiUrl: parsed.apiUrl };
 }

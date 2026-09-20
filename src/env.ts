@@ -39,6 +39,21 @@ export function resolveApiUrl(
   return { url: DEFAULT_API_URL, source: "default" };
 }
 
+// plainHttpsUrl accepts an https address with nothing attached: no
+// credentials, no query, no fragment. Returns it normalised (no trailing
+// slash) or null. `dockhold mcp` sends a token to this address, so it is
+// parsed once, properly, instead of matched on a prefix.
+export function plainHttpsUrl(raw: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" || u.username || u.password || u.search || u.hash) return null;
+  return trimSlashes(u.href);
+}
+
 // hostNotice is the one stderr line a command prints when it is about to use
 // a host that came from the config file and is not the default. The person
 // did not type that host in this terminal, so they get told.

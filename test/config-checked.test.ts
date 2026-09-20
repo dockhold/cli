@@ -134,6 +134,69 @@ test("a file that is not valid JSON is treated as no config", async () => {
   }
 });
 
+test("a saved token with a control character is refused and never reaches an error message", async () => {
+  const home = await tempHome();
+  try {
+    const bad = "dh_mcp_" + "a".repeat(10) + "\n" + "b".repeat(10);
+    await plant(home, { token: bad, apiUrl: "https://api.example.test" }, 0o600, 0o700);
+    const read = await readConfigChecked({ homedir: () => home });
+    assert.equal(read.ok, false);
+    if (!read.ok) assert.match(read.reason, /characters/);
+
+    const calls: string[] = [];
+    const stderr: string[] = [];
+    const bridge = createBridge({
+      fetch: async (url) => {
+        calls.push(url);
+        return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), { status: 200 });
+      },
+      readConfig: () => readConfigChecked({ homedir: () => home }),
+      stderr: (l) => stderr.push(l),
+      env: {},
+    });
+    const out = await bridge.handleLine(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_apps" } }));
+    assert.equal(calls.length, 0);
+    assert.ok(out !== null && !out.includes("a".repeat(10)), out ?? "");
+    assert.ok(!stderr.join("\n").includes("a".repeat(10)));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("a file that is not valid JSON never has its contents quoted in the reason", async () => {
+  const home = await tempHome();
+  try {
+    const path = configPathFor(home);
+    await mkdir(join(home, ".config", "dockhold"), { recursive: true, mode: 0o700 });
+    // A bare token pasted into the file by hand, no JSON at all.
+    await writeFile(path, "dh_mcp_SECRETVALUE" + "z".repeat(20), { mode: 0o600 });
+    const read = await readConfigChecked({ homedir: () => home });
+    assert.equal(read.ok, false);
+    if (!read.ok) {
+      assert.equal(read.reason, "it is not valid JSON");
+      assert.ok(!read.reason.includes("dh_mcp"));
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("saveConfig tightens a pre-existing open folder to 0700", { skip: !posix }, async () => {
+  const home = await tempHome();
+  try {
+    const dir = join(home, ".config", "dockhold");
+    await mkdir(dir, { recursive: true, mode: 0o755 });
+    await chmod(dir, 0o755);
+    assert.equal((await stat(dir)).mode & 0o777, 0o755);
+    await saveConfig({ token: TOKEN, apiUrl: "https://api.example.test" }, home);
+    assert.equal((await stat(dir)).mode & 0o777, 0o700);
+    const read = await readConfigChecked({ homedir: () => home });
+    assert.equal(read.ok, true);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("an unknown home directory is reported, not thrown", async () => {
   const read = await readConfigChecked({
     homedir: () => {

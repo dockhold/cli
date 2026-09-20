@@ -58,7 +58,9 @@ interface Harness {
   setConfig(c: ConfigRead): void;
 }
 
-function harness(opts: { config?: ConfigRead; handler?: Handler; env?: Record<string, string | undefined> } = {}): Harness {
+function harness(
+  opts: { config?: ConfigRead; handler?: Handler; env?: Record<string, string | undefined>; refusal?: string } = {},
+): Harness {
   let config: ConfigRead = opts.config ?? { ok: true, path: PATH, token: TOKEN, apiUrl: HOST };
   const handler = opts.handler ?? echo;
   const calls: Call[] = [];
@@ -74,6 +76,7 @@ function harness(opts: { config?: ConfigRead; handler?: Handler; env?: Record<st
     readConfig: async () => config,
     stderr: (line) => stderr.push(line),
     env: opts.env ?? {},
+    refusal: opts.refusal,
   };
   return { bridge: createBridge(deps), calls, stderr, setConfig: (c) => (config = c) };
 }
@@ -320,6 +323,30 @@ test("dead token: 401 on initialize is retried without the header; the next tool
   assert.ok(!out!.includes(TOKEN));
 });
 
+test("dead token: a batch of initialize plus a notification is still retried once without the header", async () => {
+  const h = harness({
+    handler: (c) => {
+      if (c.headers.authorization) return json(401, { error: "invalid token" });
+      return echo(c, 0);
+    },
+  });
+  const out = await h.bridge.handleLine(line([init, initialized]));
+  // A batch answer is always an array, even when only one element answered.
+  const arr = JSON.parse(out!) as Record<string, unknown>[];
+  assert.equal(arr.length, 1);
+  assert.equal(arr[0]!.id, 1);
+  assert.ok("result" in arr[0]!);
+  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[0]!.headers.authorization, `Bearer ${TOKEN}`);
+  assert.ok(!("authorization" in h.calls[1]!.headers));
+
+  // A batch carrying a tool call is not retried anonymously.
+  const mixed = await h.bridge.handleLine(line([init, toolCall]));
+  const both = JSON.parse(mixed!) as Record<string, unknown>[];
+  assert.equal(both.length, 2);
+  assert.equal(h.calls.length, 3);
+});
+
 test("environment host, token and dashboard are ignored: the host comes from the config", async () => {
   const h = harness({
     env: {
@@ -336,10 +363,10 @@ test("environment host, token and dashboard are ignored: the host comes from the
 test("a config with an http:// host is refused: stderr, tool error, no request to it", async () => {
   const h = harness({ config: { ok: true, path: PATH, token: TOKEN, apiUrl: "http://api.example.test" } });
   await h.bridge.announce();
-  assert.ok(h.stderr.some((l) => l.includes("not https") && l.includes(PATH)), h.stderr.join("\n"));
+  assert.ok(h.stderr.some((l) => l.includes("not a plain https address") && l.includes(PATH)), h.stderr.join("\n"));
 
   const text = toolErrorText(await h.bridge.handleLine(line(toolCall)));
-  assert.match(text, /not https/);
+  assert.match(text, /not a plain https address/);
   assert.equal(h.calls.length, 0, "no request for the tool call");
 
   // The client can still start: introspection goes to the default host, anonymously.
@@ -348,6 +375,43 @@ test("a config with an http:// host is refused: stderr, tool error, no request t
   assert.equal(h.calls[0]!.url, DEFAULT_HOST + "/mcp");
   assert.ok(!("authorization" in h.calls[0]!.headers));
   for (const c of h.calls) assert.ok(!c.url.startsWith("http://"));
+});
+
+test("a saved host with credentials, a query, a fragment or a bad scheme is refused; a plain one is normalised", async () => {
+  for (const bad of [
+    "https://user:pw@api.example.test",
+    "https://user@api.example.test",
+    "https://api.example.test/?x=1",
+    "https://api.example.test/#frag",
+    "ftp://api.example.test",
+    "http://api.example.test",
+    "not a url",
+    "https://",
+  ]) {
+    const h = harness({ config: { ok: true, path: PATH, token: TOKEN, apiUrl: bad } });
+    assert.match(toolErrorText(await h.bridge.handleLine(line(toolCall))), /not a plain https address/, bad);
+    assert.equal(h.calls.length, 0, bad);
+  }
+  const h = harness({ config: { ok: true, path: PATH, token: TOKEN, apiUrl: "HTTPS://API.Example.test:8443/base/" } });
+  await h.bridge.handleLine(line(toolCall));
+  assert.equal(h.calls[0]!.url, "https://api.example.test:8443/base/mcp");
+});
+
+test("a refusal from the process (certificate checks off) blocks tool calls and keeps the sign-in at home", async () => {
+  const refusal = "NODE_TLS_REJECT_UNAUTHORIZED=0 is set for this server, so the sign-in stays home.";
+  const h = harness({ refusal });
+  await h.bridge.announce();
+  assert.equal(h.stderr.length, 1);
+  assert.ok(h.stderr[0]!.includes(refusal) && h.stderr[0]!.includes(DEFAULT_HOST));
+
+  assert.equal(toolErrorText(await h.bridge.handleLine(line(toolCall))), refusal);
+  assert.equal(h.calls.length, 0);
+
+  parseLine(await h.bridge.handleLine(line(init)));
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0]!.url, DEFAULT_HOST + "/mcp");
+  assert.ok(!("authorization" in h.calls[0]!.headers));
+  assert.equal(h.stderr.length, 1);
 });
 
 test("a config that fails its checks is treated as no config; stderr names the path and reason", async () => {

@@ -1,8 +1,9 @@
 // End to end: the built `dist/index.js mcp`, stdin piped, against a local
 // HTTPS server. The bridge only talks https, so the server gets a throwaway
-// self-signed certificate from openssl and the child runs with certificate
-// checks off (an environment variable Node reads, not the bridge). The test
-// is skipped where openssl is not installed.
+// self-signed certificate from openssl, and the child trusts it through
+// NODE_EXTRA_CA_CERTS (an environment variable Node reads, not the bridge).
+// Certificate checks stay on: the bridge refuses to send a sign-in when they
+// are off. The test is skipped where openssl is not installed.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -23,7 +24,7 @@ const hasOpenssl = spawnSync("openssl", ["version"]).status === 0;
 // `npm test` builds first (see package.json), so dist/ is there in CI.
 const skip = !hasOpenssl ? "openssl is not installed" : !(await exists(entry)) ? "run npm run build first" : false;
 
-async function selfSigned(dir: string): Promise<{ key: string; cert: string }> {
+async function selfSigned(dir: string): Promise<{ key: string; cert: string; certPath: string }> {
   const key = join(dir, "key.pem");
   const cert = join(dir, "cert.pem");
   const r = spawnSync("openssl", [
@@ -32,7 +33,7 @@ async function selfSigned(dir: string): Promise<{ key: string; cert: string }> {
     "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
   ]);
   assert.equal(r.status, 0, String(r.stderr));
-  return { key: await readFile(key, "utf8"), cert: await readFile(cert, "utf8") };
+  return { key: await readFile(key, "utf8"), cert: await readFile(cert, "utf8"), certPath: cert };
 }
 
 interface Seen {
@@ -46,7 +47,7 @@ test("built CLI: stdout carries nothing but JSON-RPC; host and token come from t
   const home = join(work, "home");
   const decoy = join(work, "decoy");
   try {
-    const { key, cert } = await selfSigned(work);
+    const { key, cert, certPath } = await selfSigned(work);
     const seen: Seen[] = [];
     const server = https.createServer({ key, cert }, (req, res) => {
       let body = "";
@@ -94,7 +95,7 @@ test("built CLI: stdout carries nothing but JSON-RPC; host and token come from t
       env: {
         PATH: process.env.PATH ?? "",
         DOCKHOLD_TEST_HOME: home,
-        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        NODE_EXTRA_CA_CERTS: certPath,
         // Everything below must be ignored by the bridge.
         HOME: decoy,
         XDG_CONFIG_HOME: join(decoy, "xdg"),
@@ -173,6 +174,38 @@ test("built CLI: no config means anonymous introspection and a local not-signed-
     assert.equal(v.result.isError, true);
     assert.equal(v.result.content[0]!.text, 'Not signed in to Dockhold. Run "DOCKHOLD_REF=cursor npx dockhold login" in a terminal, then try again.');
     assert.ok(stderr.includes("https://api.dockhold.eu") && stderr.includes(join(home, ".config", "dockhold", "config.json")), stderr);
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+});
+
+test("built CLI: with certificate checks turned off, the sign-in is not sent and tool calls are refused", { skip }, async () => {
+  const work = await mkdtemp(join(tmpdir(), "dockhold-e2e-"));
+  const home = join(work, "home");
+  try {
+    await mkdir(join(home, ".config", "dockhold"), { recursive: true, mode: 0o700 });
+    const cfgPath = join(home, ".config", "dockhold", "config.json");
+    await writeFile(cfgPath, JSON.stringify({ token: TOKEN, apiUrl: "https://127.0.0.1:1" }), { mode: 0o600 });
+    await chmod(cfgPath, 0o600);
+    const child = spawn(process.execPath, ["--import", preload, entry, "mcp"], {
+      cwd: work,
+      env: { PATH: process.env.PATH ?? "", DOCKHOLD_TEST_HOME: home, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.stdin.end(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "list_apps" } }) + "\n");
+    const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
+    assert.equal(code, 0, stderr);
+    const out = stdout.split("\n").filter((l) => l.length > 0);
+    assert.equal(out.length, 1, stdout);
+    const v = JSON.parse(out[0]!) as { id: number; result: { isError: boolean; content: { text: string }[] } };
+    assert.equal(v.result.isError, true);
+    assert.match(v.result.content[0]!.text, /NODE_TLS_REJECT_UNAUTHORIZED=0/);
+    assert.ok(!stdout.includes(TOKEN) && !stderr.includes(TOKEN));
+    assert.ok(stderr.includes("NODE_TLS_REJECT_UNAUTHORIZED=0"), stderr);
   } finally {
     await rm(work, { recursive: true, force: true });
   }
