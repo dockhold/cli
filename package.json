@@ -1,6 +1,6 @@
 {
   "name": "dockhold",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Deploy an app to Dockhold from your computer or your AI tool. No GitHub, no Docker.",
   "repository": {
     "type": "git",

@@ -6,7 +6,12 @@ import { readFile, rm } from "node:fs/promises";
 import { loadToken } from "../config.js";
 import { readState, writeState, ensureGitignoreEntry } from "../state.js";
 import { packDirectory, type PackResult } from "../pack.js";
-import { hasOwnBuildFile, NO_DOCKERFILE_MESSAGE } from "../buildsource.js";
+import {
+  DETECTING_STACK_MESSAGE,
+  hasOwnBuildFile,
+  NO_DOCKERFILE_MESSAGE,
+  refusesWithoutBuildFile,
+} from "../buildsource.js";
 import { sanitizeAppName, validateAppName } from "../name.js";
 import {
   ApiError,
@@ -92,14 +97,19 @@ export async function deploy(args: string[]): Promise<number> {
       return 1;
     }
 
-    // Stack detection is a paid feature. Without it, a folder that ships no
-    // Dockerfile has a build that cannot start, and uploading first only means
-    // the person waits several minutes to hear it. `autoBuild` is undefined on
-    // an older server: unknown is not a refusal, so let the deploy run and let
-    // the build answer, exactly as it did before.
-    if (link.autoBuild === false && !(await hasOwnBuildFile(cwd))) {
-      err(NO_DOCKERFILE_MESSAGE);
-      return 1;
+    // A folder that ships no Dockerfile builds only if the server says it can:
+    // the stacks the platform recognises (every account) or automatic builds
+    // for any stack (sold with compute). When it says neither, the build
+    // cannot start, and uploading first only means the person waits several
+    // minutes to hear it. Either field undefined on an older server: unknown
+    // is not a refusal, so let the deploy run and let the build answer,
+    // exactly as it did before.
+    if (!(await hasOwnBuildFile(cwd))) {
+      if (refusesWithoutBuildFile(link)) {
+        err(NO_DOCKERFILE_MESSAGE);
+        return 1;
+      }
+      if (link.autoBuildStacks === true) info(DETECTING_STACK_MESSAGE);
     }
 
     // 4. Upload straight to the presigned URL, then confirm. Re-push once on

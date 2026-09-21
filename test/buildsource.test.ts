@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hasOwnBuildFile, NO_DOCKERFILE_MESSAGE } from "../src/buildsource.js";
+import {
+  DETECTING_STACK_MESSAGE,
+  hasOwnBuildFile,
+  NO_DOCKERFILE_MESSAGE,
+  refusesWithoutBuildFile,
+} from "../src/buildsource.js";
 
 async function folder(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "dockhold-buildsource-"));
@@ -58,4 +63,18 @@ test("the message states the fix before the upgrade", async () => {
   assert.ok(fix > -1 && upsell > -1 && fix < upsell);
   assert.match(NO_DOCKERFILE_MESSAGE, /docs\/concepts\/dockerfiles/);
   assert.ok(!NO_DOCKERFILE_MESSAGE.includes("\u2014"), "no em-dashes in user-facing copy");
+});
+
+// The refusal keys on what the server reports, never on a plan name. Only a
+// definite "no" on both counts refuses; an older server that says nothing
+// gets the deploy it always got.
+test("refusal needs a definite no on both capabilities", () => {
+  assert.equal(refusesWithoutBuildFile({ autoBuild: false, autoBuildStacks: false }), true, "neither: refuse");
+  assert.equal(refusesWithoutBuildFile({ autoBuild: false }), true, "old server without the stacks field: refuse as before");
+  assert.equal(refusesWithoutBuildFile({ autoBuild: false, autoBuildStacks: true }), false, "free account, stacks detected: let the build decide");
+  assert.equal(refusesWithoutBuildFile({ autoBuild: true, autoBuildStacks: false }), false, "paid account: never refused");
+  assert.equal(refusesWithoutBuildFile({ autoBuild: true, autoBuildStacks: true }), false);
+  assert.equal(refusesWithoutBuildFile({}), false, "older server, both unknown: not a refusal");
+  assert.equal(refusesWithoutBuildFile({ autoBuildStacks: true }), false);
+  assert.ok(!DETECTING_STACK_MESSAGE.includes("—"), "no em-dashes in user-facing copy");
 });
