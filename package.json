@@ -1,6 +1,6 @@
 {
   "name": "dockhold",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "mcpName": "eu.dockhold/dockhold",
   "description": "Deploy an app to Dockhold from your computer or your AI tool. No GitHub, no Docker.",
   "repository": {
@@ -38,7 +38,7 @@
     "mcp",
     "ai"
   ],
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": false,
   "dependencies": {
     "ignore": "^5.3.2",
