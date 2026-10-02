@@ -24,12 +24,15 @@ import {
 import { appUrl } from "../appurl.js";
 import { envFlags, flagValue, hasFlag, mb, sleep } from "../args.js";
 import { err, info } from "../output.js";
+import { guardArgs } from "../help.js";
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
 const UPLOAD_RETRIES = 3;
 
 export async function deploy(args: string[]): Promise<number> {
+  const stop = guardArgs("deploy", args);
+  if (stop !== null) return stop;
   const cwd = process.cwd();
 
   const token = await loadToken();

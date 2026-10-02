@@ -30,6 +30,7 @@ import { openBrowser } from "../browser.js";
 import { flagValue, hasFlag } from "../args.js";
 import { refSlug } from "../ref.js";
 import { err, info } from "../output.js";
+import { guardArgs } from "../help.js";
 
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -55,6 +56,8 @@ export interface LoginDeps {
 const defaultDeps: LoginDeps = { browserFlow, exchangeCode, apiBase, saveConfig, readTokenFromStdin };
 
 export async function login(args: string[], deps: LoginDeps = defaultDeps): Promise<number> {
+  const stop = guardArgs("login", args);
+  if (stop !== null) return stop;
   if (hasFlag(args, "--token")) {
     // A bare `--token` reads the value from stdin, keeping it out of shell
     // history and the process list. `--token <value>` still works as the

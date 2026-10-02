@@ -2,8 +2,11 @@ import { loadToken } from "../config.js";
 import { listApps } from "../api.js";
 import { appUrl } from "../appurl.js";
 import { err, info } from "../output.js";
+import { guardArgs } from "../help.js";
 
-export async function list(): Promise<number> {
+export async function list(args: string[] = []): Promise<number> {
+  const stop = guardArgs("list", args);
+  if (stop !== null) return stop;
   const token = await loadToken();
   if (!token) {
     err("You are not signed in. Run: dockhold login");
