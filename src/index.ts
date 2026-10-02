@@ -6,6 +6,7 @@ import { list } from "./commands/list.js";
 import { open } from "./commands/open.js";
 import { mcp } from "./commands/mcp.js";
 import { info } from "./output.js";
+import { guardArgs } from "./help.js";
 
 const HELP = `dockhold: put your app online from your computer
 
@@ -37,11 +38,11 @@ async function main(): Promise<number> {
     case "logs":
       return logs(args);
     case "list":
-      return list();
+      return list(args);
     case "open":
       return open(args);
     case "mcp":
-      return mcp();
+      return guardArgs("mcp", args) ?? mcp();
     case undefined:
     case "help":
     case "--help":

@@ -4,8 +4,11 @@ import { appUrl } from "../appurl.js";
 import { openBrowser } from "../browser.js";
 import { resolveNamespace } from "../appref.js";
 import { err, info } from "../output.js";
+import { guardArgs } from "../help.js";
 
 export async function open(args: string[]): Promise<number> {
+  const stop = guardArgs("open", args);
+  if (stop !== null) return stop;
   const namespace = await resolveNamespace(args, process.cwd());
   if (!namespace) {
     err('No app found here. Run "dockhold deploy" first, or pass --app <id>.');

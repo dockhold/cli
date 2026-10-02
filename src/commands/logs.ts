@@ -3,8 +3,11 @@ import { getLogs } from "../api.js";
 import { resolveNamespace } from "../appref.js";
 import { flagValue } from "../args.js";
 import { err, info } from "../output.js";
+import { guardArgs } from "../help.js";
 
 export async function logs(args: string[]): Promise<number> {
+  const stop = guardArgs("logs", args);
+  if (stop !== null) return stop;
   const token = await loadToken();
   if (!token) {
     err("You are not signed in. Run: dockhold login");
