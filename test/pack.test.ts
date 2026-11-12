@@ -207,3 +207,31 @@ test("packDirectory matches folder names that look like patterns literally", asy
   assert.ok(names.includes("x/secret.txt"), "[x] is a folder name, not a character class");
   assert.ok(!names.includes("#notes/s.txt"), "#notes is a folder name, not a comment");
 });
+
+test("packDirectory applies a .gitignore in a folder whose name has a ?", async () => {
+  const names = await packed({
+    "q?/.gitignore": "secret.txt\n",
+    "q?/secret.txt": "x\n",
+    "q?/ok.txt": "x\n",
+  });
+  assert.ok(!names.includes("q?/secret.txt"), "the folder's own .gitignore still applies");
+  assert.ok(names.includes("q?/ok.txt"));
+});
+
+test("packDirectory keeps folders a directory-only negation brings back", async () => {
+  // A common allow-list: ignore everything, then bring back every folder and
+  // the files wanted. Git keeps d/r.md; testing the folder without its slash
+  // first would drop d/ on "*" before "!*/" is seen.
+  const layout = (prefix: string) => ({
+    [`${prefix}.gitignore`]: "*\n!.gitignore\n!*/\n!*.md\n",
+    [`${prefix}r.md`]: "x\n",
+    [`${prefix}d/r.md`]: "x\n",
+    [`${prefix}d/x.js`]: "x\n",
+  });
+  for (const prefix of ["", "sub/"]) {
+    const names = await packed(layout(prefix));
+    assert.ok(names.includes(`${prefix}r.md`), `${prefix}r.md is kept`);
+    assert.ok(names.includes(`${prefix}d/r.md`), `${prefix}d/ is entered and ${prefix}d/r.md kept`);
+    assert.ok(!names.includes(`${prefix}d/x.js`), `${prefix}d/x.js is still left out`);
+  }
+});

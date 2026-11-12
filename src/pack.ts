@@ -48,10 +48,12 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
           return false;
         }
         if (isHardExcluded(rel)) return false;
-        // A directory-only gitignore rule ("dist/") matches the dir path with a
-        // trailing slash, so test that form too when the entry is a directory.
+        // A directory is tested only with a trailing slash. That form matches
+        // every rule the bare path does, plus directory-only rules ("dist/"),
+        // and it lets a directory-only negation ("!*/" after "*") keep the
+        // folder, as git does. The bare path would drop it on "*" first.
         const isDir = isDirectoryEntry(entry);
-        if (ig.ignores(rel) || (isDir && ig.ignores(rel + "/"))) return false;
+        if (ig.ignores(isDir ? rel + "/" : rel)) return false;
         // A kept folder's own `.gitignore` applies to what tar finds inside it.
         if (isDir) ig.enter(rel);
         return true;

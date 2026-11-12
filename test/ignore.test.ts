@@ -51,4 +51,7 @@ test("rebasePattern writes a subfolder's .gitignore line from the root", () => {
   assert.equal(rebasePattern("s.txt", "#notes"), "\\#notes/**/s.txt");
   assert.equal(rebasePattern("s.txt", "!bang"), "\\!bang/**/s.txt");
   assert.equal(rebasePattern("s.txt", "a b"), "a\\ b/**/s.txt");
+  // Except `?`: the ignore package cannot match a literal one, so it stays a
+  // one-character wildcard (it still matches the folder itself).
+  assert.equal(rebasePattern("s.txt", "q?"), "q?/**/s.txt");
 });

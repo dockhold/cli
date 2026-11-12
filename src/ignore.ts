@@ -118,7 +118,8 @@ export async function loadIgnore(cwd: string): Promise<PackIgnore> {
 // (`/build`, `a/b` -> `dir/build`, `dir/a/b`); one without (a trailing slash
 // does not count) matches at any depth below it (`cache` -> `dir/**/cache`).
 // A leading `!` stays in front. Characters in the folder name that mean
-// something in a pattern are escaped, so `[x]` or `#notes` match themselves.
+// something in a pattern are escaped, so `[x]` or `#notes` match themselves,
+// except `?` (see escapeDir).
 export function rebasePattern(line: string, dir: string): string | null {
   // Trailing spaces are dropped unless escaped with a backslash.
   let body = line.replace(/(?<!\\) +$/, "");
@@ -136,6 +137,11 @@ export function rebasePattern(line: string, dir: string): string | null {
   return `${negate}${prefix}/**/${body}`;
 }
 
+// escapeDir leaves `?` as it is. The `ignore` package turns every `?` into "any
+// one character", an escaped one too, so `\?` would match only a backslash and
+// the folder's own `.gitignore` would never apply. Unescaped, it still applies
+// to its folder, and at worst also to a sibling whose name differs in that one
+// character: more is left out, never less.
 function escapeDir(dir: string): string {
-  return dir.replace(/[\\*?[\] ]/g, "\\$&").replace(/^[!#]/, "\\$&");
+  return dir.replace(/[\\*[\] ]/g, "\\$&").replace(/^[!#]/, "\\$&");
 }
