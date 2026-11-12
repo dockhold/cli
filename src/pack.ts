@@ -1,5 +1,5 @@
 // Packs the working directory into a gzipped archive for upload, applying the
-// exclusion rules (see ignore.ts), and returns the archive path, its sha256 (computed
+// exclusion rules (see ignore.ts, including `.gitignore` files in subfolders), and returns the archive path, its sha256 (computed
 // locally, then handed to the server for the presign + verify), and its size.
 //
 // The archive is written to a temp file, not held in memory: a project can be
@@ -52,6 +52,8 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
         // trailing slash, so test that form too when the entry is a directory.
         const isDir = isDirectoryEntry(entry);
         if (ig.ignores(rel) || (isDir && ig.ignores(rel + "/"))) return false;
+        // A kept folder's own `.gitignore` applies to what tar finds inside it.
+        if (isDir) ig.enter(rel);
         return true;
       },
     },

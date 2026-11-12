@@ -77,7 +77,8 @@ The CLI packs your project folder, with a few things always left out:
 
 - `.git` and `node_modules`
 - every `.env` file (see below)
-- anything your `.gitignore` excludes
+- anything your `.gitignore` files exclude, including one in a subfolder (as
+  git reads them)
 
 You can add a `.dockholdignore` file (same format as `.gitignore`) to exclude
 more. It takes priority over `.gitignore`.

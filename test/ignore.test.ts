@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isEnvFile, isHardExcluded, toRel } from "../src/ignore.js";
+import { isEnvFile, isHardExcluded, rebasePattern, toRel } from "../src/ignore.js";
 
 test("isEnvFile matches .env and .env.*", () => {
   assert.ok(isEnvFile(".env"));
@@ -24,4 +24,31 @@ test("toRel normalizes tar entry paths", () => {
   assert.equal(toRel("./src/index.ts"), "src/index.ts");
   assert.equal(toRel("src/"), "src");
   assert.equal(toRel("a\\b"), "a/b");
+});
+
+test("rebasePattern writes a subfolder's .gitignore line from the root", () => {
+  // No slash, or only a trailing one: any depth below the folder.
+  assert.equal(rebasePattern("*", ".secrets"), ".secrets/**/*");
+  assert.equal(rebasePattern("cache", "a/b"), "a/b/**/cache");
+  assert.equal(rebasePattern("dist/", "web"), "web/**/dist/");
+  // A slash at the start or in the middle: relative to the folder.
+  assert.equal(rebasePattern("/build", "web"), "web/build");
+  assert.equal(rebasePattern("out/tmp", "web"), "web/out/tmp");
+  assert.equal(rebasePattern("**/x.log", "web"), "web/**/x.log");
+  // Negation stays in front.
+  assert.equal(rebasePattern("!.gitignore", ".secrets"), "!.secrets/**/.gitignore");
+  assert.equal(rebasePattern("!/keep", "web"), "!web/keep");
+  // Blank lines and comments are not patterns.
+  assert.equal(rebasePattern("", "web"), null);
+  assert.equal(rebasePattern("   ", "web"), null);
+  assert.equal(rebasePattern("# note", "web"), null);
+  assert.equal(rebasePattern("/", "web"), null);
+  // Unescaped trailing spaces are dropped; an escaped one is kept.
+  assert.equal(rebasePattern("a.txt  ", "web"), "web/**/a.txt");
+  assert.equal(rebasePattern("a\\ ", "web"), "web/**/a\\ ");
+  // Pattern characters in the folder name are escaped.
+  assert.equal(rebasePattern("s.txt", "[x]"), "\\[x\\]/**/s.txt");
+  assert.equal(rebasePattern("s.txt", "#notes"), "\\#notes/**/s.txt");
+  assert.equal(rebasePattern("s.txt", "!bang"), "\\!bang/**/s.txt");
+  assert.equal(rebasePattern("s.txt", "a b"), "a\\ b/**/s.txt");
 });
