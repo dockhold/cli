@@ -11,7 +11,7 @@
 
 import type { Ignore } from "ignore";
 import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -39,77 +39,144 @@ export function isHardExcluded(rel: string): boolean {
 }
 
 // toRel normalizes a tar entry path to a posix, no-leading-`./`, no-trailing-`/`
-// relative path suitable for the ignore matcher.
+// relative path suitable for the ignore matcher. Only on Windows is `\` a
+// separator; elsewhere it is part of a name (a folder can be called `a\b`).
 export function toRel(p: string): string {
-  let s = p.replace(/\\/g, "/");
+  let s = process.platform === "win32" ? p.replace(/\\/g, "/") : p;
   if (s.startsWith("./")) s = s.slice(2);
   s = s.replace(/\/+$/, "");
   return s;
 }
 
+// A folder's view of the ignore files: the subfolder rules on its own chain
+// (each parent folder's `.gitignore` from the top down, then its own, rebased
+// to the root), and a matcher holding the root `.gitignore`, those rules and
+// `.dockholdignore`, in that order. The last matching rule wins across files
+// exactly as it does within one, which is git's precedence.
+interface Scope {
+  rules: string[];
+  matcher: Ignore;
+}
+
 // PackIgnore answers "does the ignore-file layer exclude this path?" for the
-// pack filter. All patterns live in ONE matcher, in precedence order (root
-// `.gitignore`, subfolder `.gitignore` files from the top down, `.dockholdignore`
-// last), so the last matching pattern wins across files exactly as it does
-// within one. A subfolder's patterns are rewritten to root-relative ones (see
-// rebasePattern), which keeps them from matching anything outside it.
+// pack filter. A path is tested with the scope of the folder it sits in, so a
+// rule is only ever tested against paths inside its own folder. Cost per path
+// is the rules on its chain, not every rule in the project, and a folder that
+// has no `.gitignore` shares its parent's scope.
 //
 // Subfolder files are read lazily: the filter calls enter() on each folder it
-// keeps, before tar reads that folder's contents. A folder that is excluded is
-// never entered, so a `.gitignore` inside it is never read, which matches git
-// (a path inside an excluded folder cannot be brought back).
+// keeps, before tar reads that folder's contents (tar filters a folder when it
+// stats it, and lists it only after). A folder that is excluded is never
+// entered, so a `.gitignore` inside it is never read, which matches git (a path
+// inside an excluded folder cannot be brought back).
+//
+// The filter runs inside tar's callbacks, where a throw would crash the
+// process. So a problem is recorded instead: the path is left out and
+// packDirectory throws `failure` once tar is done.
 export class PackIgnore {
-  private matcher: Ignore;
-  private readonly nested: string[] = [];
+  private readonly scopes = new Map<string, Scope>();
+  private failed: Error | null = null;
 
   constructor(
-    private readonly cwd: string,
     private readonly root: string,
     private readonly dockhold: string,
+    private readonly cwd: string,
   ) {
-    this.matcher = this.build();
+    this.scopes.set("", this.scope([]));
   }
 
-  ignores(rel: string): boolean {
-    return this.matcher.ignores(rel);
+  get failure(): Error | null {
+    return this.failed;
   }
 
-  // enter reads `<dir>/.gitignore`, if there is one, so its patterns apply to
-  // everything under dir. dir is relative to the root and not the root itself.
-  enter(dir: string): void {
-    let raw: string;
+  // ignores tests rel (relative to the root, not the root itself). A folder is
+  // tested with a trailing slash only: that form matches every rule the bare
+  // path does, plus folder-only rules ("dist/"), and lets a folder-only negation
+  // ("!*/" after "*") keep the folder, as git does.
+  ignores(rel: string, isDir: boolean): boolean {
+    const scope = this.scopeFor(parentOf(rel));
+    return scope === null || scope.matcher.ignores(isDir ? rel + "/" : rel);
+  }
+
+  // enter reads `<dir>/.gitignore`, if there is one, so its rules apply to
+  // everything under dir. It returns false when the folder must be left out
+  // because the file could not be read.
+  enter(dir: string): boolean {
+    const parent = this.scopeFor(parentOf(dir));
+    if (parent === null) return false;
+    let raw: string | null;
     try {
-      raw = readFileSync(join(this.cwd, dir, ".gitignore"), "utf8");
-    } catch {
-      return; // absent (or not a file), nothing to add
+      raw = readGitignore(join(this.cwd, dir, ".gitignore"));
+    } catch (e) {
+      this.fail(`could not read ${dir}/.gitignore: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
     }
-    const patterns = raw
+    const own = (raw ?? "")
       .split(/\r?\n/)
       .map((line) => rebasePattern(line, dir))
       .filter((p): p is string => p !== null);
-    if (patterns.length === 0) return;
-    // tar enters a folder before any folder inside it, so appending keeps the
-    // shallower file ahead of the deeper one, which is the order git applies.
-    this.nested.push(...patterns);
-    this.matcher = this.build();
+    this.scopes.set(dir, own.length === 0 ? parent : this.scope([...parent.rules, ...own]));
+    return true;
   }
 
-  private build(): Ignore {
-    return ignore().add(this.root).add(this.nested).add(this.dockhold);
+  // scopeFor returns the scope of an entered folder. A folder that was not
+  // entered means tar listed it before filtering it, which would let its
+  // `.gitignore` arrive too late; that is a failure, never a guess.
+  private scopeFor(dir: string): Scope | null {
+    const scope = this.scopes.get(dir);
+    if (scope === undefined) this.fail(`${dir} was listed before it was checked`);
+    return scope ?? null;
+  }
+
+  private scope(rules: string[]): Scope {
+    return { rules, matcher: ignore().add(this.root).add(rules).add(this.dockhold) };
+  }
+
+  private fail(message: string): void {
+    this.failed ??= new Error(`Could not apply your ignore files: ${message}`);
   }
 }
 
-// loadIgnore reads the root `.gitignore` and `.dockholdignore`. Absent files are
-// simply skipped. Subfolder `.gitignore` files are added by PackIgnore.enter.
+function parentOf(rel: string): string {
+  const i = rel.lastIndexOf("/");
+  return i === -1 ? "" : rel.slice(0, i);
+}
+
+// readGitignore returns a `.gitignore` file's text without a leading UTF-8 byte
+// order mark (git drops it too), or null when there is nothing to read: no
+// file, or not a regular file. That includes a symbolic link, because git does
+// not follow a linked `.gitignore` in the work tree and applies no rules from
+// it. Any other error is thrown, so a file we fail to read never silently
+// lets through what it excludes.
+function readGitignore(path: string): string | null {
+  let isFile: boolean;
+  try {
+    isFile = lstatSync(path).isFile();
+  } catch (e) {
+    if (isAbsent(e)) return null;
+    throw e;
+  }
+  return isFile ? readFileSync(path, "utf8").replace(/^﻿/, "") : null;
+}
+
+function isAbsent(e: unknown): boolean {
+  const code = (e as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+// loadIgnore reads the root `.gitignore` and `.dockholdignore`. An absent file
+// adds nothing; any other read error is thrown. `.dockholdignore` is ours, not
+// git's, so a link to it is followed. Subfolder `.gitignore` files are added by
+// PackIgnore.enter.
 export async function loadIgnore(cwd: string): Promise<PackIgnore> {
-  const read = async (file: string) => {
-    try {
-      return await readFile(join(cwd, file), "utf8");
-    } catch {
-      return ""; // absent, nothing to add
-    }
-  };
-  return new PackIgnore(cwd, await read(".gitignore"), await read(".dockholdignore"));
+  const root = readGitignore(join(cwd, ".gitignore")) ?? "";
+  let dockhold = "";
+  try {
+    dockhold = await readFile(join(cwd, ".dockholdignore"), "utf8");
+  } catch (e) {
+    if (!isAbsent(e)) throw e;
+  }
+  return new PackIgnore(root, dockhold, cwd);
 }
 
 // rebasePattern turns one line of `<dir>/.gitignore` into the same rule written
@@ -118,8 +185,8 @@ export async function loadIgnore(cwd: string): Promise<PackIgnore> {
 // (`/build`, `a/b` -> `dir/build`, `dir/a/b`); one without (a trailing slash
 // does not count) matches at any depth below it (`cache` -> `dir/**/cache`).
 // A leading `!` stays in front. Characters in the folder name that mean
-// something in a pattern are escaped, so `[x]` or `#notes` match themselves,
-// except `?` (see escapeDir).
+// something in a pattern are escaped, so `[x]` or `#notes` match themselves
+// (`?` aside, see escapeDir).
 export function rebasePattern(line: string, dir: string): string | null {
   // Trailing spaces are dropped unless escaped with a backslash.
   let body = line.replace(/(?<!\\) +$/, "");
@@ -139,9 +206,9 @@ export function rebasePattern(line: string, dir: string): string | null {
 
 // escapeDir leaves `?` as it is. The `ignore` package turns every `?` into "any
 // one character", an escaped one too, so `\?` would match only a backslash and
-// the folder's own `.gitignore` would never apply. Unescaped, it still applies
-// to its folder, and at worst also to a sibling whose name differs in that one
-// character: more is left out, never less.
+// the folder's own `.gitignore` would never apply. Unescaped it is still exact:
+// a folder's rules are only tested against paths inside that folder (see
+// PackIgnore), where the only name in that place is the folder's own.
 function escapeDir(dir: string): string {
   return dir.replace(/[\\*[\] ]/g, "\\$&").replace(/^[!#]/, "\\$&");
 }

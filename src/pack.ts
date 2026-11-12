@@ -12,7 +12,7 @@
 import { create } from "tar";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isEnvFile, isHardExcluded, loadIgnore, toRel } from "./ignore.js";
@@ -48,19 +48,21 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
           return false;
         }
         if (isHardExcluded(rel)) return false;
-        // A directory is tested only with a trailing slash. That form matches
-        // every rule the bare path does, plus directory-only rules ("dist/"),
-        // and it lets a directory-only negation ("!*/" after "*") keep the
-        // folder, as git does. The bare path would drop it on "*" first.
         const isDir = isDirectoryEntry(entry);
-        if (ig.ignores(isDir ? rel + "/" : rel)) return false;
+        if (ig.ignores(rel, isDir)) return false;
         // A kept folder's own `.gitignore` applies to what tar finds inside it.
-        if (isDir) ig.enter(rel);
+        if (isDir && !ig.enter(rel)) return false;
         return true;
       },
     },
     ["."],
   );
+  // A problem inside the filter is recorded, not thrown (see PackIgnore): the
+  // archive may be missing a folder, so it is never handed back.
+  if (ig.failure) {
+    await rm(workDir, { recursive: true, force: true });
+    throw ig.failure;
+  }
 
   const sha256 = await hashFile(archivePath);
   const sizeBytes = (await stat(archivePath)).size;

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isEnvFile, isHardExcluded, rebasePattern, toRel } from "../src/ignore.js";
+import { PackIgnore, isEnvFile, isHardExcluded, rebasePattern, toRel } from "../src/ignore.js";
 
 test("isEnvFile matches .env and .env.*", () => {
   assert.ok(isEnvFile(".env"));
@@ -23,7 +23,8 @@ test("isHardExcluded catches the non-negotiable paths at any depth", () => {
 test("toRel normalizes tar entry paths", () => {
   assert.equal(toRel("./src/index.ts"), "src/index.ts");
   assert.equal(toRel("src/"), "src");
-  assert.equal(toRel("a\\b"), "a/b");
+  // `\` is a separator only on Windows; elsewhere it is part of a name.
+  assert.equal(toRel("a\\b"), process.platform === "win32" ? "a/b" : "a\\b");
 });
 
 test("rebasePattern writes a subfolder's .gitignore line from the root", () => {
@@ -52,6 +53,16 @@ test("rebasePattern writes a subfolder's .gitignore line from the root", () => {
   assert.equal(rebasePattern("s.txt", "!bang"), "\\!bang/**/s.txt");
   assert.equal(rebasePattern("s.txt", "a b"), "a\\ b/**/s.txt");
   // Except `?`: the ignore package cannot match a literal one, so it stays a
-  // one-character wildcard (it still matches the folder itself).
+  // one-character wildcard. It is only tested inside that folder, so it is exact.
   assert.equal(rebasePattern("s.txt", "q?"), "q?/**/s.txt");
+});
+
+test("PackIgnore fails, and leaves the path out, for a folder it was not shown first", () => {
+  const ig = new PackIgnore("", "", "/nonexistent");
+  assert.equal(ig.ignores("a", true), false, "control: a top-level folder is kept");
+  assert.equal(ig.failure, null);
+  assert.ok(ig.enter("a"));
+  assert.equal(ig.ignores("a/f.txt", false), false, "control: inside an entered folder");
+  assert.equal(ig.ignores("b/f.txt", false), true, "b was never entered");
+  assert.match(String(ig.failure?.message), /b was listed before it was checked/);
 });
