@@ -28,6 +28,22 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
   const ig = await loadIgnore(cwd);
   let foundEnv = false;
 
+  // keep decides one tar entry: true packs it, false leaves it out.
+  const keep = (path: string, entry: unknown): boolean => {
+    const rel = toRel(path);
+    if (rel === "" || rel === ".") return true;
+    const base = rel.split("/").pop() ?? rel;
+    if (isEnvFile(base)) {
+      foundEnv = true;
+      return false;
+    }
+    if (isHardExcluded(rel)) return false;
+    const isDir = isDirectoryEntry(entry);
+    if (ig.ignores(rel, isDir)) return false;
+    // A kept folder's own `.gitignore` applies to what tar finds inside it.
+    return !isDir || ig.enter(rel);
+  };
+
   const workDir = await mkdtemp(join(tmpdir(), "dockhold-"));
   const archivePath = join(workDir, "source.tgz");
 
@@ -38,21 +54,17 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
       cwd,
       portable: true, // stable mode/mtime → the same tree hashes the same
       // Returning false prunes an entry; for a directory tar also skips
-      // descending into it, so excluding node_modules is cheap.
+      // descending into it, so excluding node_modules is cheap. The filter
+      // runs inside tar's callbacks, where a throw would crash the process, so
+      // any throw (the ignore package refuses some patterns) is recorded and
+      // the entry left out.
       filter: (path: string, entry: unknown) => {
-        const rel = toRel(path);
-        if (rel === "" || rel === ".") return true;
-        const base = rel.split("/").pop() ?? rel;
-        if (isEnvFile(base)) {
-          foundEnv = true;
+        try {
+          return keep(path, entry);
+        } catch (e) {
+          ig.fail(`${toRel(path)}: ${e instanceof Error ? e.message : String(e)}`);
           return false;
         }
-        if (isHardExcluded(rel)) return false;
-        const isDir = isDirectoryEntry(entry);
-        if (ig.ignores(rel, isDir)) return false;
-        // A kept folder's own `.gitignore` applies to what tar finds inside it.
-        if (isDir && !ig.enter(rel)) return false;
-        return true;
       },
     },
     ["."],

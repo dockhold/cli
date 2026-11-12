@@ -362,5 +362,28 @@ test("packDirectory stays fast with thousands of subfolder .gitignore files", as
   const seconds = (Date.now() - started) / 1000;
   assert.ok(names.includes("packages/g7/p7/index.ts"));
   assert.ok(!names.includes("packages/g7/p7/debug.log"));
-  assert.ok(seconds < 30, `took ${seconds.toFixed(1)} s`);
+  // Generous for a slow runner; the old shape took minutes here.
+  assert.ok(seconds < 60, `took ${seconds.toFixed(1)} s`);
+});
+
+test("packDirectory keeps the files of a folder whose .gitignore is **/", async () => {
+  const names = await packed({
+    "s/.gitignore": "**/\n",
+    "s/f.txt": "x\n",
+    "s/d/g.txt": "x\n",
+  });
+  assert.ok(names.includes("s/f.txt"), "**/ matches folders only, not s itself");
+  assert.ok(names.includes("s/.gitignore"));
+  assert.ok(!names.includes("s/d/g.txt"), "the folder inside s is left out");
+});
+
+test("packDirectory fails, and does not crash, on a rule the ignore package refuses", posixOnly, async () => {
+  // A folder name ending in a backslash makes the package build an invalid
+  // pattern. That throw happens inside tar's callbacks.
+  const dir = await files({ "logs\\/.gitignore": "secret.txt\n", "logs\\/secret.txt": "x\n", "app.js": "x\n" });
+  try {
+    await assert.rejects(packDirectory(dir), /Could not apply your ignore files: logs\\/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

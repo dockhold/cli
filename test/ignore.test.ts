@@ -36,6 +36,10 @@ test("rebasePattern writes a subfolder's .gitignore line from the root", () => {
   assert.equal(rebasePattern("/build", "web"), "web/build");
   assert.equal(rebasePattern("out/tmp", "web"), "web/out/tmp");
   assert.equal(rebasePattern("**/x.log", "web"), "web/**/x.log");
+  // A lone `**` is read as `*`, so the rule cannot match the folder itself.
+  assert.equal(rebasePattern("**/", "s"), "s/**/*/");
+  assert.equal(rebasePattern("**", "s"), "s/**/*");
+  assert.equal(rebasePattern("!**/", "s"), "!s/**/*/");
   // Negation stays in front.
   assert.equal(rebasePattern("!.gitignore", ".secrets"), "!.secrets/**/.gitignore");
   assert.equal(rebasePattern("!/keep", "web"), "!web/keep");

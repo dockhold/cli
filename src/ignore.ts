@@ -48,13 +48,15 @@ export function toRel(p: string): string {
   return s;
 }
 
-// A folder's view of the ignore files: the subfolder rules on its own chain
-// (each parent folder's `.gitignore` from the top down, then its own, rebased
-// to the root), and a matcher holding the root `.gitignore`, those rules and
+// A folder's view of the ignore files: `chain` holds the subfolder rules on its
+// own chain (each parent folder's `.gitignore` from the top down, then its own,
+// rebased to the root), and `matcher` the root `.gitignore`, that chain and
 // `.dockholdignore`, in that order. The last matching rule wins across files
-// exactly as it does within one, which is git's precedence.
+// exactly as it does within one, which is git's precedence. Adding one Ignore
+// to another copies references to its compiled rules, so each line is
+// compiled once however many folders reuse it.
 interface Scope {
-  rules: string[];
+  chain: Ignore;
   matcher: Ignore;
 }
 
@@ -71,22 +73,27 @@ interface Scope {
 // inside an excluded folder cannot be brought back).
 //
 // The filter runs inside tar's callbacks, where a throw would crash the
-// process. So a problem is recorded instead: the path is left out and
+// process. So a problem is recorded instead (fail): the path is left out and
 // packDirectory throws `failure` once tar is done.
 export class PackIgnore {
   private readonly scopes = new Map<string, Scope>();
+  private readonly root: Ignore;
+  private readonly dockhold: Ignore;
   private failed: Error | null = null;
 
-  constructor(
-    private readonly root: string,
-    private readonly dockhold: string,
-    private readonly cwd: string,
-  ) {
-    this.scopes.set("", this.scope([]));
+  constructor(root: string, dockhold: string, private readonly cwd: string) {
+    this.root = ignore().add(root);
+    this.dockhold = ignore().add(dockhold);
+    this.scopes.set("", this.scope(ignore()));
   }
 
   get failure(): Error | null {
     return this.failed;
+  }
+
+  // fail records the first problem; packDirectory throws it after tar is done.
+  fail(message: string): void {
+    this.failed ??= new Error(`Could not apply your ignore files: ${message}`);
   }
 
   // ignores tests rel (relative to the root, not the root itself). A folder is
@@ -115,7 +122,7 @@ export class PackIgnore {
       .split(/\r?\n/)
       .map((line) => rebasePattern(line, dir))
       .filter((p): p is string => p !== null);
-    this.scopes.set(dir, own.length === 0 ? parent : this.scope([...parent.rules, ...own]));
+    this.scopes.set(dir, own.length === 0 ? parent : this.scope(ignore().add(parent.chain).add(own)));
     return true;
   }
 
@@ -124,16 +131,14 @@ export class PackIgnore {
   // `.gitignore` arrive too late; that is a failure, never a guess.
   private scopeFor(dir: string): Scope | null {
     const scope = this.scopes.get(dir);
-    if (scope === undefined) this.fail(`${dir} was listed before it was checked`);
+    if (scope === undefined) {
+      this.fail(`${dir} was listed before it was checked. This is a bug in the CLI; please report it.`);
+    }
     return scope ?? null;
   }
 
-  private scope(rules: string[]): Scope {
-    return { rules, matcher: ignore().add(this.root).add(rules).add(this.dockhold) };
-  }
-
-  private fail(message: string): void {
-    this.failed ??= new Error(`Could not apply your ignore files: ${message}`);
+  private scope(chain: Ignore): Scope {
+    return { chain, matcher: ignore().add(this.root).add(chain).add(this.dockhold) };
   }
 }
 
@@ -156,7 +161,7 @@ function readGitignore(path: string): string | null {
     if (isAbsent(e)) return null;
     throw e;
   }
-  return isFile ? readFileSync(path, "utf8").replace(/^﻿/, "") : null;
+  return isFile ? readFileSync(path, "utf8").replace(/^\uFEFF/, "") : null;
 }
 
 function isAbsent(e: unknown): boolean {
@@ -196,8 +201,14 @@ export function rebasePattern(line: string, dir: string): string | null {
     negate = "!";
     body = body.slice(1);
   }
-  const trimmed = body.endsWith("/") ? body.slice(0, -1) : body;
+  let trimmed = body.endsWith("/") ? body.slice(0, -1) : body;
   if (trimmed === "") return null;
+  // With no other slash, git reads `**` as `*`. Written out as `dir/**/**/`,
+  // the ignore package would also match dir itself and drop all of it.
+  if (trimmed === "**") {
+    trimmed = "*";
+    body = body.replace("**", "*");
+  }
   const prefix = escapeDir(dir);
   if (body.startsWith("/")) return `${negate}${prefix}${body}`;
   if (trimmed.includes("/")) return `${negate}${prefix}/${body}`;
