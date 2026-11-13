@@ -1,13 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PackIgnore, isEnvFile, isHardExcluded, rebasePattern, toRel } from "../src/ignore.js";
+import { PackIgnore, isEnvFile, isHardExcluded, isValueFile, rebasePattern, toRel } from "../src/ignore.js";
 
-test("isEnvFile matches .env and .env.*", () => {
-  assert.ok(isEnvFile(".env"));
-  assert.ok(isEnvFile(".env.local"));
-  assert.ok(isEnvFile(".env.production"));
-  assert.ok(!isEnvFile("env"));
-  assert.ok(!isEnvFile("environment.ts"));
+test("isEnvFile matches every name that starts with .env, in any case", () => {
+  for (const name of [".env", ".env.local", ".env.production", ".envrc", ".env-local", ".env_prod", ".envs", ".ENV", ".ENVRC", ".Env.Local"]) {
+    assert.ok(isEnvFile(name), name);
+  }
+  for (const name of ["env", "environment.ts", "prod.env", ".venv", "a.envrc", "x.env.local"]) {
+    assert.ok(!isEnvFile(name), name);
+  }
+});
+
+test("isValueFile matches value file names, in any case, and nothing else", () => {
+  for (const name of ["prod.env", "production.env", "secrets.env", "PROD.ENV", "app.env.local", "prod.env.bak", "config.env.ts"]) {
+    assert.ok(isValueFile(name), name);
+  }
+  for (const name of ["env", "environment.ts", "vite-env.d.ts", "next-env.d.ts", "prodenv", "env.ts", "envoy.yaml"]) {
+    assert.ok(!isValueFile(name), name);
+  }
 });
 
 test("isHardExcluded catches the non-negotiable paths at any depth", () => {
@@ -17,6 +27,8 @@ test("isHardExcluded catches the non-negotiable paths at any depth", () => {
   assert.ok(isHardExcluded(".dockhold/app.json"));
   assert.ok(isHardExcluded(".env"));
   assert.ok(isHardExcluded("config/.env.local"));
+  assert.ok(isHardExcluded(".envs/.production/.django"));
+  assert.ok(isHardExcluded("sub/.ENVRC"));
   assert.ok(!isHardExcluded("src/index.ts"));
 });
 

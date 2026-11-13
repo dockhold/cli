@@ -4,7 +4,7 @@ import { chmod, mkdtemp, mkdir, stat, symlink, writeFile, rm } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { list } from "tar";
-import { packDirectory } from "../src/pack.js";
+import { packDirectory, type EnvFiles } from "../src/pack.js";
 
 async function fixture(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "dockhold-pack-"));
@@ -37,7 +37,7 @@ test("packDirectory excludes secrets, deps, git, and gitignored paths", async ()
   const dir = await fixture();
   try {
     const result = await packDirectory(dir);
-    assert.ok(result.foundEnv, "should notice a .env file");
+    assert.deepEqual(result.env.envNames, [".env", ".env.local"], "should name the .env files");
     assert.match(result.sha256, /^[0-9a-f]{64}$/);
     assert.ok(result.sizeBytes > 0);
 
@@ -110,12 +110,16 @@ async function files(tree: Record<string, string>): Promise<string> {
 }
 
 async function packed(tree: Record<string, string>): Promise<string[]> {
+  return (await packedWithEnv(tree)).names;
+}
+
+async function packedWithEnv(tree: Record<string, string>): Promise<{ names: string[]; env: EnvFiles }> {
   const dir = await files(tree);
   try {
     const result = await packDirectory(dir);
     const names = await entriesOf(result.archivePath);
     await rm(dirname(result.archivePath), { recursive: true, force: true });
-    return names;
+    return { names, env: result.env };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -386,4 +390,76 @@ test("packDirectory fails, and does not crash, on a rule the ignore package refu
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("packDirectory leaves out every .env* name, files and folders, and no ignore file brings one back", async () => {
+  const { names, env } = await packedWithEnv({
+    ".gitignore": "!.envrc\n!.envs/\n!*\n",
+    "sub/.gitignore": "!.ENVRC\n",
+    ".dockholdignore": "!.envrc\n!/.env-local\n!.envs/\n!.envs/**\n",
+    ".envrc": "export K=v\n",
+    ".env-local": "K=v\n",
+    ".env_prod": "K=v\n",
+    ".ENV.PROD": "K=v\n",
+    "sub/.ENVRC": "export K=v\n",
+    ".envs/.production/.django": "K=v\n",
+    "index.html": "<h1>hi</h1>\n",
+    "env.txt": "x\n",
+    "environment.ts": "x\n",
+  });
+  assert.ok(names.includes("index.html"), "control: the folder is packed");
+  assert.ok(names.includes("env.txt") && names.includes("environment.ts"), "control: env-like source files are packed");
+  assert.ok(!names.some((n) => n.toLowerCase().includes(".env")), names.join(" "));
+  assert.deepEqual(env.envNames, [".ENV.PROD", ".env-local", ".env_prod", ".envrc", ".envs", "sub/.ENVRC"]);
+});
+
+test("packDirectory leaves out value files unless a .dockholdignore line names them", async () => {
+  const { names, env } = await packedWithEnv({
+    ".gitignore": "!*.env\n!prod.env\n",
+    "sub/.gitignore": "!*.env\n!secrets.env\n",
+    ".dockholdignore": "!defaults.env\n!/sub/keep.env\n",
+    "prod.env": "KEY=v\n",
+    "PROD2.ENV": "KEY=v\n",
+    "app.env.local": "KEY=v\n",
+    "sub/secrets.env": "KEY=v\n",
+    "sub/keep.env": "KEY=v\n",
+    "defaults.env": "LOG_LEVEL=info\n",
+    "conf.env/settings.txt": "x\n",
+    "index.html": "<h1>hi</h1>\n",
+  });
+  assert.ok(names.includes("index.html"), "control: the folder is packed");
+  for (const n of ["prod.env", "PROD2.ENV", "app.env.local", "sub/secrets.env"]) {
+    assert.ok(!names.includes(n), `${n} stays home: no .gitignore line brings it back`);
+  }
+  assert.ok(names.includes("defaults.env"), ".dockholdignore !defaults.env brings it back");
+  assert.ok(names.includes("sub/keep.env"), ".dockholdignore !/sub/keep.env brings it back");
+  assert.ok(names.includes("conf.env/settings.txt"), "a folder named like a value file is packed");
+  assert.deepEqual(env.valueFiles, ["PROD2.ENV", "app.env.local", "prod.env", "sub/secrets.env"]);
+  assert.deepEqual(env.valueFilesUploaded, ["defaults.env", "sub/keep.env"]);
+});
+
+test("packDirectory brings no value file back through a broad .dockholdignore line", async () => {
+  for (const rules of ["!*\n", "!*.env\n", "!sub/**\n", "*\n!sub/\n!sub/**\n", "!**\n", "!sub/*.env\n", "\uFEFF!*\n"]) {
+    const { names, env } = await packedWithEnv({
+      ".dockholdignore": rules,
+      "sub/prod.env": "KEY=v\n",
+      "sub/ok.js": "x\n",
+    });
+    assert.ok(names.includes("sub/ok.js"), `control: sub/ok.js is packed under ${JSON.stringify(rules)}`);
+    assert.ok(!names.includes("sub/prod.env"), `sub/prod.env stays home under ${JSON.stringify(rules)}`);
+    assert.deepEqual(env.valueFiles, ["sub/prod.env"]);
+  }
+});
+
+test("packDirectory still leaves out what a .dockholdignore line excludes", async () => {
+  // The line the FastAgent target writes, and a named negation undone later.
+  const { names } = await packedWithEnv({
+    ".dockholdignore": "/prod.env\n!keep.env\nkeep.env\n",
+    "prod.env": "KEY=v\n",
+    "keep.env": "KEY=v\n",
+    "index.html": "<h1>hi</h1>\n",
+  });
+  assert.ok(names.includes("index.html"), "control: the folder is packed");
+  assert.ok(!names.includes("prod.env"));
+  assert.ok(!names.includes("keep.env"), "the last matching .dockholdignore line wins");
 });
