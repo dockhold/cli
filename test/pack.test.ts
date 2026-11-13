@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { list } from "tar";
 import { packDirectory, type EnvFiles } from "../src/pack.js";
+import { envNotice } from "../src/commands/deploy.js";
 
 async function fixture(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "dockhold-pack-"));
@@ -439,7 +440,8 @@ test("packDirectory leaves out value files unless a .dockholdignore line names t
 });
 
 test("packDirectory brings no value file back through a broad .dockholdignore line", async () => {
-  for (const rules of ["!*\n", "!*.env\n", "!sub/**\n", "*\n!sub/\n!sub/**\n", "!**\n", "!sub/*.env\n", "\uFEFF!*\n"]) {
+  for (const rules of ["!*\n", "!*.env\n", "!sub/**\n", "*\n!sub/\n!sub/**\n", "!**\n", "!sub/*.env\n", "\uFEFF!*\n",
+    "!sub/prod.env\n*.env\n!*\n", "!sub\n", " !*\n", "!sub/\r\n!*\r\n"]) {
     const { names, env } = await packedWithEnv({
       ".dockholdignore": rules,
       "sub/prod.env": "KEY=v\n",
@@ -462,4 +464,18 @@ test("packDirectory still leaves out what a .dockholdignore line excludes", asyn
   assert.ok(names.includes("index.html"), "control: the folder is packed");
   assert.ok(!names.includes("prod.env"));
   assert.ok(!names.includes("keep.env"), "the last matching .dockholdignore line wins");
+});
+
+test("the line the env notice suggests brings the value file back", async () => {
+  for (const path of ["prod.env", "sub/prod.env", "my dir/#a !b.env", "sub/prod.env~"]) {
+    const tree = { [path]: "KEY=v\n", ".dockholdignore": "*.env\n", "index.html": "<h1>hi</h1>\n" };
+    const first = await packedWithEnv(tree);
+    assert.ok(!first.names.includes(path), `${path} stays home at first`);
+    const line = /add the line (.+) at the end of \.dockholdignore/.exec(envNotice(first.env) ?? "")?.[1];
+    assert.ok(line, `a line is suggested for ${path}`);
+    const second = await packedWithEnv({ ...tree, ".dockholdignore": `*.env\n${line}\n` });
+    assert.ok(second.names.includes("index.html"), "control: the folder is packed");
+    assert.ok(second.names.includes(path), `${line} brings ${path} back`);
+    assert.deepEqual(second.env.valueFilesUploaded, [path]);
+  }
 });

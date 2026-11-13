@@ -78,8 +78,8 @@ The CLI packs your project folder, with a few things always left out:
 - `.git` and `node_modules`
 - every file or folder whose name starts with `.env`, in any case: `.env`,
   `.env.local`, `.envrc`, `.envs/` (see below)
-- value files such as `prod.env` or `app.env.local`, unless `.dockholdignore`
-  names them (see below)
+- value files such as `prod.env`, `app.env.local` or a copy like `prod.env~`,
+  unless `.dockholdignore` names them (see below)
 - anything your `.gitignore` files exclude, including one in a subfolder (as
   git reads them)
 
@@ -88,7 +88,7 @@ more. It takes priority over every `.gitignore`, so a `!` line in it brings a
 file back in any folder, even one a subfolder's `.gitignore` leaves out.
 
 A value file comes back only through a `.dockholdignore` line that names it,
-such as `!/prod.env` or `!**/defaults.env`. A line with a wildcard in its last
+such as `!/prod.env` or `!**/defaults.env`, after any line that leaves it out. A line with a wildcard in its last
 part (`!*`, `!*.env`, `!config/**`) does not bring one back, and neither does a
 `.gitignore` line. A name that starts with `.env` never comes back: rename the
 file if your app needs it. `deploy` tells you which env files it left out and

@@ -33,11 +33,14 @@ export function isEnvFile(name: string): boolean {
 }
 
 // VALUE_FILE_SHAPES are the names, lower-cased, of files that hold values the
-// way a `.env` does, which tools read with `--env-file`: `prod.env`, and
-// `app.env.local` or `prod.env.bak`. A name that starts with `.env` is not here
-// because isEnvFile already leaves it out for good. Add a shape here to keep
-// another kind of value file home.
-const VALUE_FILE_SHAPES: readonly RegExp[] = [/.\.env$/, /.\.env\./];
+// way a `.env` does, which tools read with `--env-file`: `.env` after another
+// part of the name, then the end or anything but a letter or digit. That is
+// `prod.env`, `app.env.local`, and the copies editors and file managers make
+// (`prod.env~`, `prod.env-old`, `prod.env (copy)`), but not `app.environment`.
+// A name that starts with `.env` is not here because isEnvFile already leaves
+// it out for good. `env.*` is not here either: it would catch source files
+// such as `env.js`. Add a shape here to keep another kind of value file home.
+const VALUE_FILE_SHAPES: readonly RegExp[] = [/.\.env(?![a-z0-9])/];
 
 // isValueFile is true for a file name with one of VALUE_FILE_SHAPES, in any
 // case. It applies to files only, so a folder named `conf.env` is packed.

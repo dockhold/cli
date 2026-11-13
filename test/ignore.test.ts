@@ -12,10 +12,13 @@ test("isEnvFile matches every name that starts with .env, in any case", () => {
 });
 
 test("isValueFile matches value file names, in any case, and nothing else", () => {
-  for (const name of ["prod.env", "production.env", "secrets.env", "PROD.ENV", "app.env.local", "prod.env.bak", "config.env.ts"]) {
+  for (const name of ["prod.env", "production.env", "secrets.env", "PROD.ENV", "app.env.local", "prod.env.bak", "config.env.ts",
+    "prod.env~", "prod.env-old", "prod.env_bak", "prod.env 2", "prod.env (copy)"]) {
     assert.ok(isValueFile(name), name);
   }
-  for (const name of ["env", "environment.ts", "vite-env.d.ts", "next-env.d.ts", "prodenv", "env.ts", "envoy.yaml"]) {
+  // env.* is left alone on purpose: env.js and env.ts are source files.
+  for (const name of ["env", "environment.ts", "vite-env.d.ts", "next-env.d.ts", "prodenv", "env.ts", "env.js", "envoy.yaml",
+    "app.environment", "x.envoy", "prod.env2"]) {
     assert.ok(!isValueFile(name), name);
   }
 });

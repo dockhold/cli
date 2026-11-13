@@ -148,13 +148,14 @@ export function failureMessage(serverMessage?: string): string {
   return `\nThe deploy failed.${reason}\nRun "npx dockhold logs --type build" to see why.`;
 }
 
-// ENV_NOTICE_NAMES caps how many paths one line of the env notice lists.
+// ENV_NOTICE_NAMES caps how many `.env*` paths the env notice lists. Value
+// files are always listed in full: one may be a source file the build needs.
 const ENV_NOTICE_NAMES = 5;
 
-// UNPRINTABLE matches control and text-direction characters, shown as "?" so a
-// file name in a cloned repo cannot send escape codes to the terminal or
-// disguise itself.
-const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+// UNPRINTABLE matches control, invisible and text-direction characters, shown
+// as "?" so a file name in a cloned repo cannot send escape codes to the
+// terminal or disguise itself.
+const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
 
 // envNotice tells the person which env files stayed on their machine, how to
 // set the values instead, how to get a file back where that is possible, and
@@ -162,15 +163,17 @@ const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 // when the pack met no env file.
 export function envNotice(env: EnvFiles): string | null {
   const lines: string[] = [];
-  const leftOut = [...env.envNames, ...env.valueFiles].sort();
-  if (leftOut.length > 0) {
-    lines.push(`Left out environment files: ${listPaths(leftOut)}.`);
-    lines.push("Set their values as app variables with --env KEY=VALUE or in the dashboard.");
-  }
   if (env.envNames.length > 0) {
+    lines.push(`Left out environment files: ${listPaths(env.envNames, ENV_NOTICE_NAMES)}.`);
     lines.push("A name that starts with .env is never uploaded. If your app needs one of these files, rename it.");
   }
-  if (env.valueFiles.length > 0) lines.push(valueFileHint(env.valueFiles));
+  if (env.valueFiles.length > 0) {
+    lines.push(`Left out value files: ${listPaths(env.valueFiles)}.`);
+    lines.push(valueFileHint(env.valueFiles));
+  }
+  if (lines.length > 0) {
+    lines.push("Set the values as app variables with --env KEY=VALUE or in the dashboard.");
+  }
   const up = env.valueFilesUploaded;
   if (up.length > 0) {
     lines.push(`Uploading ${listPaths(up)} because .dockholdignore names ${up.length === 1 ? "it" : "them"}.`);
@@ -178,9 +181,9 @@ export function envNotice(env: EnvFiles): string | null {
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
-function listPaths(paths: string[]): string {
-  const shown = paths.slice(0, ENV_NOTICE_NAMES).map(printable).join(", ");
-  const more = paths.length - ENV_NOTICE_NAMES;
+function listPaths(paths: string[], cap = paths.length): string {
+  const shown = paths.slice(0, cap).map(printable).join(", ");
+  const more = paths.length - cap;
   return more > 0 ? `${shown} and ${more} more` : shown;
 }
 
@@ -193,9 +196,9 @@ function printable(path: string): string {
 function valueFileHint(paths: string[]): string {
   const example = paths.find((p) => printable(p) === p && !/[*?[\\]/.test(p) && !p.endsWith(" "));
   if (example === undefined) {
-    return "To upload a file such as prod.env, add a line to .dockholdignore with its path and a ! in front.";
+    return "To upload one, add its path with a ! in front as the last line of .dockholdignore.";
   }
-  return `To upload ${example}, add the line !/${example} to .dockholdignore.`;
+  return `To upload ${example}, add the line !/${example} at the end of .dockholdignore.`;
 }
 
 interface ResolvedName {

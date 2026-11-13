@@ -24,7 +24,7 @@ test("the env notice is silent when the pack met no env file", () => {
 
 test("the env notice names what stayed home and says a .env name has no way back", () => {
   const msg = envNotice({ ...noEnv, envNames: [".env", ".envrc"] }) ?? "";
-  assert.ok(msg.includes("Left out environment files: .env, .envrc."));
+  assert.ok(msg.includes("Left out environment files: .env, .envrc."), msg);
   assert.ok(msg.includes("--env KEY=VALUE"));
   assert.ok(msg.includes("never uploaded"));
   assert.ok(!msg.includes(".dockholdignore"), "no hint that cannot work");
@@ -32,19 +32,22 @@ test("the env notice names what stayed home and says a .env name has no way back
 
 test("the env notice gives the exact line that brings a value file back", () => {
   const msg = envNotice({ ...noEnv, valueFiles: ["a*b.env", "sub/prod.env"] }) ?? "";
-  assert.ok(msg.includes("To upload sub/prod.env, add the line !/sub/prod.env to .dockholdignore."), msg);
+  assert.ok(msg.includes("Left out value files: a*b.env, sub/prod.env."), msg);
+  assert.ok(msg.includes("To upload sub/prod.env, add the line !/sub/prod.env at the end of .dockholdignore."), msg);
   assert.ok(!msg.includes("never uploaded"));
 });
 
-test("the env notice names value files that go up, caps long lists, and shows no control characters", () => {
+test("the env notice names value files that go up, caps only the .env list, and shows no hidden characters", () => {
+  const valueFiles = ["a0.env", "a1.env", "a2.env", "a3.env", "a4.env", "a5.env", "src/client.env.ts", "x\u001b[2Jy.env", "y\u2028\u202e.env", "z.env"];
   const msg = envNotice({
-    envNames: [".env", ".env.a", ".env.b", ".env.c"],
-    valueFiles: ["x\u001b[2Jy.env", "z.env"],
+    envNames: [".env", ".env.a", ".env.b", ".env.c", ".env.d", ".env.e"],
+    valueFiles,
     valueFilesUploaded: ["defaults.env"],
   }) ?? "";
-  assert.ok(msg.includes("and 1 more."), msg);
-  assert.ok(!msg.includes("\u001b"), "escape code shown as ?");
-  assert.ok(msg.includes("x?[2Jy.env"));
-  assert.ok(msg.includes("add the line !/z.env"), "the example skips a name that is not literal");
+  assert.ok(msg.includes(".env.d and 1 more."), msg);
+  assert.ok(msg.includes("src/client.env.ts"), "every value file is named, so a left-out source file is visible");
+  assert.ok(!/[\u001b\u2028\u202e]/.test(msg), "hidden characters shown as ?");
+  assert.ok(msg.includes("x?[2Jy.env") && msg.includes("y??.env"));
+  assert.ok(msg.includes("add the line !/a0.env at the end"), msg);
   assert.ok(msg.includes("Uploading defaults.env because .dockholdignore names it."));
 });
