@@ -15,18 +15,27 @@ import { createReadStream } from "node:fs";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isEnvFile, isHardExcluded, loadIgnore, toRel } from "./ignore.js";
+import { isEnvFile, isHardExcluded, isValueFile, loadIgnore, toRel } from "./ignore.js";
+
+// EnvFiles lists, by path from the project root and sorted, the env files the
+// pack met, for the notice deploy prints. A folder left out is listed itself;
+// what is inside it is never looked at.
+export interface EnvFiles {
+  envNames: string[]; // names that start with `.env`: never uploaded
+  valueFiles: string[]; // value files left out (`prod.env`)
+  valueFilesUploaded: string[]; // value files `.dockholdignore` brought back by name
+}
 
 export interface PackResult {
   archivePath: string;
   sha256: string;
   sizeBytes: number;
-  foundEnv: boolean; // true if a .env* file was seen (and skipped); drives the notice
+  env: EnvFiles;
 }
 
 export async function packDirectory(cwd: string): Promise<PackResult> {
   const ig = await loadIgnore(cwd);
-  let foundEnv = false;
+  const env: EnvFiles = { envNames: [], valueFiles: [], valueFilesUploaded: [] };
 
   // keep decides one tar entry: true packs it, false leaves it out.
   const keep = (path: string, entry: unknown): boolean => {
@@ -34,12 +43,17 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
     if (rel === "" || rel === ".") return true;
     const base = rel.split("/").pop() ?? rel;
     if (isEnvFile(base)) {
-      foundEnv = true;
+      env.envNames.push(rel);
       return false;
     }
     if (isHardExcluded(rel)) return false;
     const isDir = isDirectoryEntry(entry);
-    if (ig.ignores(rel, isDir)) return false;
+    const valueFile = !isDir && isValueFile(base);
+    if (ig.ignores(rel, isDir) || (valueFile && !ig.bringsBack(rel))) {
+      if (valueFile) env.valueFiles.push(rel);
+      return false;
+    }
+    if (valueFile) env.valueFilesUploaded.push(rel);
     // A kept folder's own `.gitignore` applies to what tar finds inside it.
     return !isDir || ig.enter(rel);
   };
@@ -78,7 +92,8 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
 
   const sha256 = await hashFile(archivePath);
   const sizeBytes = (await stat(archivePath)).size;
-  return { archivePath, sha256, sizeBytes, foundEnv };
+  for (const list of Object.values(env)) list.sort();
+  return { archivePath, sha256, sizeBytes, env };
 }
 
 // tar's create filter passes an fs.Stats for a real file/dir; narrow to the
