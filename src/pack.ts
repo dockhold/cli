@@ -1,5 +1,5 @@
 // Packs the working directory into a gzipped archive for upload, applying the
-// exclusion rules (see ignore.ts), and returns the archive path, its sha256 (computed
+// exclusion rules (see ignore.ts, including `.gitignore` files in subfolders), and returns the archive path, its sha256 (computed
 // locally, then handed to the server for the presign + verify), and its size.
 //
 // The archive is written to a temp file, not held in memory: a project can be
@@ -12,7 +12,7 @@
 import { create } from "tar";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdtemp, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isEnvFile, isHardExcluded, loadIgnore, toRel } from "./ignore.js";
@@ -28,6 +28,22 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
   const ig = await loadIgnore(cwd);
   let foundEnv = false;
 
+  // keep decides one tar entry: true packs it, false leaves it out.
+  const keep = (path: string, entry: unknown): boolean => {
+    const rel = toRel(path);
+    if (rel === "" || rel === ".") return true;
+    const base = rel.split("/").pop() ?? rel;
+    if (isEnvFile(base)) {
+      foundEnv = true;
+      return false;
+    }
+    if (isHardExcluded(rel)) return false;
+    const isDir = isDirectoryEntry(entry);
+    if (ig.ignores(rel, isDir)) return false;
+    // A kept folder's own `.gitignore` applies to what tar finds inside it.
+    return !isDir || ig.enter(rel);
+  };
+
   const workDir = await mkdtemp(join(tmpdir(), "dockhold-"));
   const archivePath = join(workDir, "source.tgz");
 
@@ -38,25 +54,27 @@ export async function packDirectory(cwd: string): Promise<PackResult> {
       cwd,
       portable: true, // stable mode/mtime → the same tree hashes the same
       // Returning false prunes an entry; for a directory tar also skips
-      // descending into it, so excluding node_modules is cheap.
+      // descending into it, so excluding node_modules is cheap. The filter
+      // runs inside tar's callbacks, where a throw would crash the process, so
+      // any throw (the ignore package refuses some patterns) is recorded and
+      // the entry left out.
       filter: (path: string, entry: unknown) => {
-        const rel = toRel(path);
-        if (rel === "" || rel === ".") return true;
-        const base = rel.split("/").pop() ?? rel;
-        if (isEnvFile(base)) {
-          foundEnv = true;
+        try {
+          return keep(path, entry);
+        } catch (e) {
+          ig.fail(`${toRel(path)}: ${e instanceof Error ? e.message : String(e)}`);
           return false;
         }
-        if (isHardExcluded(rel)) return false;
-        // A directory-only gitignore rule ("dist/") matches the dir path with a
-        // trailing slash, so test that form too when the entry is a directory.
-        const isDir = isDirectoryEntry(entry);
-        if (ig.ignores(rel) || (isDir && ig.ignores(rel + "/"))) return false;
-        return true;
       },
     },
     ["."],
   );
+  // A problem inside the filter is recorded, not thrown (see PackIgnore): the
+  // archive may be missing a folder, so it is never handed back.
+  if (ig.failure) {
+    await rm(workDir, { recursive: true, force: true });
+    throw ig.failure;
+  }
 
   const sha256 = await hashFile(archivePath);
   const sizeBytes = (await stat(archivePath)).size;

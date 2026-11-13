@@ -77,10 +77,12 @@ The CLI packs your project folder, with a few things always left out:
 
 - `.git` and `node_modules`
 - every `.env` file (see below)
-- anything your `.gitignore` excludes
+- anything your `.gitignore` files exclude, including one in a subfolder (as
+  git reads them)
 
 You can add a `.dockholdignore` file (same format as `.gitignore`) to exclude
-more. It takes priority over `.gitignore`.
+more. It takes priority over every `.gitignore`, so a `!` line in it brings a
+file back in any folder, even one a subfolder's `.gitignore` leaves out.
 
 ## How your folder gets built
 
