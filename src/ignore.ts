@@ -1,13 +1,18 @@
 // Packing rules. Two layers:
 //
 //  1. Hard excludes that are NON-NEGOTIABLE: `.git`, `node_modules`, `.dockhold`,
-//     and every `.env*` file. These are enforced directly, BEFORE any ignore
-//     file is consulted, so a `.gitignore` negation (`!.env`) can never sneak a
-//     secret file into the archive. There is no flag to include them.
+//     and every file or folder whose name starts with `.env`. These are
+//     enforced directly, BEFORE any ignore file is consulted, so a negation
+//     (`!.env`) can never sneak a secret file into the archive. There is no
+//     flag to include them.
 //  2. The `.gitignore` files, read the way git reads them: the one at the root,
 //     then one in any subfolder, whose patterns apply only inside that folder
 //     and win over the folders above it. Then `.dockholdignore` (same syntax,
 //     root only), added last so its patterns and negations WIN over them all.
+//  3. Value files (`prod.env`, `app.env.local`, see isValueFile): left out
+//     even when the layers above keep them, unless a `.dockholdignore` line
+//     names the file (PackIgnore.bringsBack). No `.gitignore` line and no
+//     broad negation (`!*`, `!dist/**`) brings one back by accident.
 
 import type { Ignore } from "ignore";
 import { createRequire } from "node:module";
@@ -20,9 +25,28 @@ import { join } from "node:path";
 // createRequire hands back the real callable factory the runtime exports.
 const ignore = createRequire(import.meta.url)("ignore") as (opts?: unknown) => Ignore;
 
-// isEnvFile matches `.env` and `.env.<anything>` (the `.env*` glob).
-export function isEnvFile(basename: string): boolean {
-  return basename === ".env" || basename.startsWith(".env.");
+// isEnvFile matches every name that starts with `.env`: `.env`, `.env.local`,
+// `.envrc` (direnv), `.env-prod`, and a folder of them such as `.envs`. Case is
+// ignored, because `.ENV` is the same file as `.env` on macOS and Windows.
+export function isEnvFile(name: string): boolean {
+  return name.toLowerCase().startsWith(".env");
+}
+
+// VALUE_FILE_SHAPES are the names, lower-cased, of files that hold values the
+// way a `.env` does, which tools read with `--env-file`: `.env` after another
+// part of the name, then the end or anything but a letter or digit. That is
+// `prod.env`, `app.env.local`, and the copies editors and file managers make
+// (`prod.env~`, `prod.env-old`, `prod.env (copy)`), but not `app.environment`.
+// A name that starts with `.env` is not here because isEnvFile already leaves
+// it out for good. `env.*` is not here either: it would catch source files
+// such as `env.js`. Add a shape here to keep another kind of value file home.
+const VALUE_FILE_SHAPES: readonly RegExp[] = [/.\.env(?![a-z0-9])/];
+
+// isValueFile is true for a file name with one of VALUE_FILE_SHAPES, in any
+// case. It applies to files only, so a folder named `conf.env` is packed.
+export function isValueFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return VALUE_FILE_SHAPES.some((shape) => shape.test(lower));
 }
 
 const HARD_DIRS = new Set([".git", "node_modules", ".dockhold"]);
@@ -79,11 +103,13 @@ export class PackIgnore {
   private readonly scopes = new Map<string, Scope>();
   private readonly root: Ignore;
   private readonly dockhold: Ignore;
+  private readonly naming: Ignore;
   private failed: Error | null = null;
 
   constructor(root: string, dockhold: string, private readonly cwd: string) {
     this.root = ignore().add(root);
     this.dockhold = ignore().add(dockhold);
+    this.naming = ignore().add(namingLines(dockhold));
     this.scopes.set("", this.scope(ignore()));
   }
 
@@ -140,6 +166,29 @@ export class PackIgnore {
   private scope(chain: Ignore): Scope {
     return { chain, matcher: ignore().add(this.root).add(chain).add(this.dockhold) };
   }
+
+  // bringsBack is true when `.dockholdignore` brings the file rel back with a
+  // line that names it, such as `!prod.env`, `!/sub/prod.env` or
+  // `!**/prod.env`. Only those lines count (see namingLines), so a value file
+  // never comes back through a line written for other files.
+  bringsBack(rel: string): boolean {
+    return this.naming.test(rel).unignored;
+  }
+}
+
+// namingLines keeps the `.dockholdignore` lines that bringsBack weighs: every
+// line that leaves files out, and each `!` line whose last part names one
+// file or folder with no wildcard. `!*`, `!*.env` and `!dist/**` are dropped.
+// An escaped character counts as a wildcard, which only ever keeps a file home.
+function namingLines(text: string): string[] {
+  return text
+    .replace(/^﻿/, "")
+    .split(/\r?\n/)
+    .filter((line) => {
+      if (!line.startsWith("!")) return true;
+      const last = line.slice(1).replace(/ +$/, "").replace(/\/+$/, "").split("/").pop() ?? "";
+      return last !== "" && !/[*?[\\]/.test(last);
+    });
 }
 
 function parentOf(rel: string): string {
